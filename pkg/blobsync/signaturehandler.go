@@ -3,6 +3,7 @@ package blobsync
 import (
 	"crypto/md5"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -60,12 +61,7 @@ func generateBlockSig( buffer []byte, offset int64, blockSize int, id int ) (*Bl
 }
 
 // CreateSignatureFromScratch reads a file, creates a signature.
-func CreateSignatureFromScratch( filePath string ) (*SizeBasedCompleteSignature, error) {
-
-	f, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
+func CreateSignatureFromScratch( localFile *os.File ) (*SizeBasedCompleteSignature, error) {
 
 	offset := int64(0)
 	buffer := make([]byte, SignatureSize)
@@ -73,10 +69,16 @@ func CreateSignatureFromScratch( filePath string ) (*SizeBasedCompleteSignature,
 	//reader := bufio.NewReader(f)
 
 	sigSizeLUT := make(map[int][]BlockSig)
-	for n, err := f.ReadAt(buffer, offset); n > 0; {
-		if err != nil {
+	for {
+		n, err := localFile.Read(buffer)
+
+		if err != nil && err != io.EOF {
 			fmt.Printf("Cannot read file: %s\n", err.Error())
 			return nil, err
+		}
+
+		if err == io.EOF {
+			break
 		}
 
 		blockSig,err := generateBlockSig( buffer, offset, n, idCount)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/Azure/azure-pipeline-go/pipeline"
 	"github.com/Azure/azure-storage-blob-go/azblob"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -64,6 +65,18 @@ func (bh BlobHandler) UploadBlob( file *os.File, containerName string, blobName 
 
   return err
 }
+
+func (bh BlobHandler) UploadBlobFromReader( reader io.Reader, containerName string, blobName string ) error {
+
+	containerURL,_ := bh.CreateContainerURL(containerName)
+	blobURL := containerURL.NewBlockBlobURL(blobName)
+	ctx := context.Background() // This example uses a never-expiring context
+
+	// dont use for big files... unsure about concurrency here.
+	_, err := azblob.UploadStreamToBlockBlob(ctx, reader, blobURL, azblob.UploadStreamToBlockBlobOptions{ BufferSize: 100000})
+	return err
+}
+
 
 
 func (bh BlobHandler) DownloadBlob( file *os.File, containerName string, blobName string) error {

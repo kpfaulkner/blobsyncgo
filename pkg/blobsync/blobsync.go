@@ -1,8 +1,11 @@
 package blobsync
 
 import (
+
+	"encoding/json"
 	"fmt"
 	"github.com/kpfaulkner/blobsyncgo/pkg/azureutils"
+	"io/ioutil"
 	"os"
 )
 
@@ -17,6 +20,9 @@ type BlobSync struct {
 
 	// blob pipeline....  now the mechanism for accessing blobs.
 	blobHandler azureutils.BlobHandler
+
+	// signatures...
+	signatureHandler SignatureHandler
 }
 
 func NewBlobSync(accountName string, accountKey string) BlobSync {
@@ -24,6 +30,7 @@ func NewBlobSync(accountName string, accountKey string) BlobSync {
 	bs.blobAccountName = accountName
 	bs.blobKey = accountKey
 	bs.blobHandler = azureutils.NewBlobHandler(accountName, accountKey)
+  bs.signatureHandler = NewSignatureHandler()
 
 	return bs
 }
@@ -53,7 +60,7 @@ func (bs BlobSync) Upload(localFile *os.File, containerName string, blobName str
 			return nil, err
 		}
 
-		err = bs.uploadSig(*sig, blobName)
+		err = bs.uploadSig(sig, containerName, blobName)
 		if err != nil {
 			fmt.Printf("Cannot upload sig:  %s\n", err.Error())
 			return nil, err
@@ -75,13 +82,28 @@ func (bs BlobSync) uploadAsNewBlob(localFile *os.File, containerName, blobName s
 	return nil
 }
 
-func (bs BlobSync) generateSig(localFile *os.File) (*Signature, error) {
+func (bs BlobSync) generateSig(localFile *os.File) (*SizeBasedCompleteSignature, error) {
 
-	return nil, nil
+	// rewind to begining of file.
+	localFile.Seek(0,0)
+
+	sig, err := CreateSignatureFromScratch(localFile)
+	if err != nil {
+		fmt.Printf("Cannot create signature %s\n", err.Error())
+		return nil, err
+	}
+	return sig,nil
 }
 
 
-func (bs BlobSync) uploadSig(sig Signature, blobName string) error {
+func (bs BlobSync) uploadSig(sig *SizeBasedCompleteSignature, containerName string, blobName string) error {
+
+	sigBytes, _ := json.Marshal(sig)
+
+	// write to temp file? seems silly, but cant get streaming working.
+	_ = ioutil.WriteFile(`c:\temp\temp.sig`, sigBytes, 0644)
+	f,_ := os.Open(`c:\temp\temp.sig`)
+	bs.blobHandler.UploadBlob(f, containerName, blobName+".sig")
 
 	return nil
 }
