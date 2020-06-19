@@ -35,3 +35,15 @@ func NewSizeBasedCompleteSignature() SizeBasedCompleteSignature{
 	s.Signatures = make(map[int]CompleteSignature)
 	return s
 }
+
+// output to stdout.
+func (s SizeBasedCompleteSignature) Display() {
+
+}
+
+// SaveToFile, should probably change to a io.Writer
+func (s SizeBasedCompleteSignature) SaveToFile( fileName string) error {
+
+
+	return nil
+}

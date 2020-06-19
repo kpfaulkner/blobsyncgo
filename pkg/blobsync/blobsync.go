@@ -2,9 +2,8 @@ package blobsync
 
 import (
 	"fmt"
-	"github.com/Azure/azure-pipeline-go/pipeline"
 	"github.com/kpfaulkner/blobsyncgo/pkg/azureutils"
-	"io"
+	"os"
 )
 
 type BlobSync struct {
@@ -17,14 +16,14 @@ type BlobSync struct {
 	blobContainer string
 
 	// blob pipeline....  now the mechanism for accessing blobs.
-	blobPipeline pipeline.Pipeline
+	blobHandler azureutils.BlobHandler
 }
 
 func NewBlobSync(accountName string, accountKey string) BlobSync {
 	bs := BlobSync{}
 	bs.blobAccountName = accountName
 	bs.blobKey = accountKey
-	bs.blobPipeline = azureutils.CreateBlobClientPipeline(accountName, accountKey)
+	bs.blobHandler = azureutils.NewBlobHandler(accountName, accountKey)
 
 	return bs
 }
@@ -32,7 +31,7 @@ func NewBlobSync(accountName string, accountKey string) BlobSync {
 // Upload will upload the data from a reader.
 // It will return the signature of the file uploaded.
 // or an error if something went boom.
-func (bs BlobSync) Upload(localFile io.Reader, containerName string, blobName string ) (*Signature, error) {
+func (bs BlobSync) Upload(localFile *os.File, containerName string, blobName string ) (*Signature, error) {
 
 	// does blob already exist?
 	doesBlobExist := false  // in reality, check in Azure.
@@ -42,7 +41,7 @@ func (bs BlobSync) Upload(localFile io.Reader, containerName string, blobName st
   	// doing the tricky stuff.
   } else {
 
-		err := bs.uploadAsNewBlob(localFile, blobName)
+		err := bs.uploadAsNewBlob(localFile, containerName, blobName)
 		if err != nil {
 			fmt.Printf("Cannot upload as new blob: %s\n", err.Error())
 			return nil, err
@@ -59,18 +58,24 @@ func (bs BlobSync) Upload(localFile io.Reader, containerName string, blobName st
 			fmt.Printf("Cannot upload sig:  %s\n", err.Error())
 			return nil, err
 		}
-	} else {
-
 	}
+
 	return nil, nil
 }
 
-func (bs BlobSync) uploadAsNewBlob(localFile io.Reader, blobName string) error {
+func (bs BlobSync) uploadAsNewBlob(localFile *os.File, containerName, blobName string) error {
+
+	bs.blobHandler.CreateContainerURL(containerName)
+	err := bs.blobHandler.UploadBlob(localFile, containerName, blobName)
+	if err != nil {
+		fmt.Printf("Unable to upload blob %s\n", err.Error())
+		return err
+	}
 
 	return nil
 }
 
-func (bs BlobSync) generateSig(localFile io.Reader) (*Signature, error) {
+func (bs BlobSync) generateSig(localFile *os.File) (*Signature, error) {
 
 	return nil, nil
 }

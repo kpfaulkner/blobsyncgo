@@ -1,10 +1,8 @@
 package blobsync
 
 import (
-	"bufio"
 	"crypto/md5"
 	"fmt"
-	"hash/adler32"
 	"os"
 )
 
@@ -86,7 +84,7 @@ func CreateSignatureFromScratch( filePath string ) (*SizeBasedCompleteSignature,
 			fmt.Printf("error generatingBlockSig %s\n", err.Error())
 			return nil, err
 		}
-		var blockSigArray []BlockSig{}
+		var blockSigArray []BlockSig
 		var ok bool
 		// check if signatures of size n exist in the dict already.
 		blockSigArray, ok = sigSizeLUT[n]
