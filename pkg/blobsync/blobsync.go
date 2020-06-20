@@ -1,7 +1,7 @@
 package blobsync
 
 import (
-
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/kpfaulkner/blobsyncgo/pkg/azureutils"
@@ -107,3 +107,48 @@ func (bs BlobSync) uploadSig(sig *SizeBasedCompleteSignature, containerName stri
 
 	return nil
 }
+
+// DownloadBlobToFile downloads blob and stores at localFilePath size.
+// Not attempting interfaces yet, dont want the risk of a 2G blob being stored into memory :)
+func (bs BlobSync) DownloadBlobToFile( localFilePath string, containerName string, blobName string ) error {
+
+	f, err := os.Create(localFilePath)
+	defer f.Close()
+
+	if err != nil {
+		fmt.Printf("Cannot open %s file for writing: %s\n", localFilePath, err.Error())
+		return err
+	}
+
+	err = bs.blobHandler.DownloadBlob(f, containerName, blobName)
+	if err != nil {
+		fmt.Printf("Cannot download blob:  %s\n", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+// DownloadSignatureForBlob. Takes the blob name, appends the ".sig" to it
+// returns the signature
+func (bs BlobSync) DownloadSignatureForBlob( containerName string, blobName string ) (*SizeBasedCompleteSignature, error) {
+
+	buffer := bytes.Buffer{}
+
+	err := bs.blobHandler.DownloadBlobToBuffer(&buffer, containerName, blobName+".sig")
+	if err != nil {
+		fmt.Printf("Cannot download signature for blob %s : %s\n", blobName, err.Error())
+		return nil, err
+	}
+
+	var sig SizeBasedCompleteSignature
+	err = json.Unmarshal(buffer.Bytes(), &sig)
+	if err != nil {
+		fmt.Printf("Cannot unmarshal signature : %s\n",  err.Error())
+		return nil, err
+	}
+
+	return &sig, nil
+
+}
+

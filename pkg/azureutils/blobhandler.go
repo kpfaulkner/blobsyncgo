@@ -1,6 +1,7 @@
 package azureutils
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/Azure/azure-pipeline-go/pipeline"
@@ -77,8 +78,6 @@ func (bh BlobHandler) UploadBlobFromReader( reader io.Reader, containerName stri
 	return err
 }
 
-
-
 func (bh BlobHandler) DownloadBlob( file *os.File, containerName string, blobName string) error {
 	containerURL,_ := bh.CreateContainerURL(containerName)
 	blobURL := containerURL.NewBlobURL(blobName)
@@ -86,3 +85,15 @@ func (bh BlobHandler) DownloadBlob( file *os.File, containerName string, blobNam
 	err := azblob.DownloadBlobToFile(ctx, blobURL, 0, azblob.CountToEnd, file, azblob.DownloadFromBlobOptions{})
 	return err
 }
+
+func (bh BlobHandler) DownloadBlobToBuffer( buffer *bytes.Buffer, containerName string, blobName string) error {
+	containerURL,_ := bh.CreateContainerURL(containerName)
+	blobURL := containerURL.NewBlobURL(blobName)
+
+	ctx := context.Background() // This example uses a never-expiring context
+	downloadResponse, err := blobURL.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false)
+	bodyStream := downloadResponse.Body(azblob.RetryReaderOptions{MaxRetryRequests: 20})
+	_, err = buffer.ReadFrom(bodyStream)
+	return err
+}
+
