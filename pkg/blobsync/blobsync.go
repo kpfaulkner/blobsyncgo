@@ -2,9 +2,12 @@ package blobsync
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/kpfaulkner/blobsyncgo/pkg/azureutils"
+	"io"
 	"io/ioutil"
 	"os"
 )
@@ -38,7 +41,7 @@ func NewBlobSync(accountName string, accountKey string) BlobSync {
 // Upload will upload the data from a reader.
 // It will return the signature of the file uploaded.
 // or an error if something went boom.
-func (bs BlobSync) Upload(localFile *os.File, containerName string, blobName string ) (*Signature, error) {
+func (bs BlobSync) Upload(localFile *os.File, containerName string, blobName string ) error {
 
 	// does blob already exist?
 	doesBlobExist := false  // in reality, check in Azure.
@@ -46,28 +49,97 @@ func (bs BlobSync) Upload(localFile *os.File, containerName string, blobName str
 
   if doesBlobExist && doesSigExist {
   	// doing the tricky stuff.
+  	return bs.uploadDeltaOnly(localFile, containerName, blobName)
   } else {
-
-		err := bs.uploadAsNewBlob(localFile, containerName, blobName)
-		if err != nil {
-			fmt.Printf("Cannot upload as new blob: %s\n", err.Error())
-			return nil, err
-		}
-
-		sig, err := bs.generateSig(localFile)
-		if err != nil {
-			fmt.Printf("Cannot generate sig:  %s\n", err.Error())
-			return nil, err
-		}
-
-		err = bs.uploadSig(sig, containerName, blobName)
-		if err != nil {
-			fmt.Printf("Cannot upload sig:  %s\n", err.Error())
-			return nil, err
-		}
+  	return bs.uploadBlobAndSigAsNew(localFile, containerName, blobName)
 	}
 
-	return nil, nil
+	return nil
+}
+
+// uploadDeltaOnly hardest method of the entire project.
+// 1. download signature
+// 2. compare signature with local file.
+// 3. determine new parts to upload
+// 4. upload blocks
+// 5. reconstruct blob from old and new blocks
+// 6. upload signature
+func (bs BlobSync) uploadDeltaOnly(localFile *os.File, containerName, blobName string) error {
+
+  sig, err := bs.DownloadSignatureForBlob(containerName, blobName)
+  if err != nil {
+  	fmt.Printf("Unable to get sig for blob %s : %s\n", blobName, err)
+  	return err
+  }
+
+  searchResults, err := SearchLocalFileForSignature( localFile,*sig )
+  if err != nil {
+  	return err
+  }
+
+  fmt.Printf("search results.... %v\n", searchResults)
+	return nil
+}
+
+func (bs BlobSync) uploadBlobAndSigAsNew(localFile *os.File, containerName, blobName string) error {
+	err := bs.uploadAsNewBlob(localFile, containerName, blobName)
+	if err != nil {
+		fmt.Printf("Cannot upload as new blob: %s\n", err.Error())
+		return err
+	}
+
+	sig, err := bs.generateSig(localFile)
+	if err != nil {
+		fmt.Printf("Cannot generate sig:  %s\n", err.Error())
+		return err
+	}
+
+	err = bs.uploadSig(sig, containerName, blobName)
+	if err != nil {
+		fmt.Printf("Cannot upload sig:  %s\n", err.Error())
+		return  err
+	}
+
+	// set MD5 for blob.
+	_, err = bs.generateMD5String( localFile)
+  if err != nil {
+  	return err
+  }
+
+  /* Still need to sort this out.
+	err = bs.setMD5ForBlob( md5Sig, containerName, blobname)
+	if err != nil {
+		fmt.Printf("Cannot set MD5 for blob  %s\n", err.Error())
+		return  err
+	}
+ */
+	return nil
+}
+
+func (bs BlobSync) generateMD5String(f *os.File) (string, error) {
+
+	// back to beginning.
+	f.Seek(0,0)
+
+	//Open a new hash interface to write to
+	hash := md5.New()
+
+	//Copy the file in the hash interface and check for any error
+	if _, err := io.Copy(hash, f); err != nil {
+		return "", err
+	}
+
+	hashInBytes := hash.Sum(nil)[:16]
+
+	// or just base64??
+	returnMD5String := hex.EncodeToString(hashInBytes)
+	return returnMD5String, nil
+}
+
+func (bs BlobSync) setMD5ForBlob(md5 string, containerName, blobName string) error {
+
+
+	return nil
 }
 
 func (bs BlobSync) uploadAsNewBlob(localFile *os.File, containerName, blobName string) error {

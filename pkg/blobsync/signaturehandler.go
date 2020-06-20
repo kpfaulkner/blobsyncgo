@@ -9,7 +9,7 @@ import (
 
 const (
 
-	// need to remember what this is about :)
+	// Default signature size in bytes
   SignatureSize int = 10000
 
 )
@@ -110,4 +110,16 @@ func CreateSignatureFromScratch( localFile *os.File ) (*SizeBasedCompleteSignatu
   }
 
   return &sizedBaseSignature, nil
+}
+
+func RollSignature( length int64, previousByte byte, nextByte byte, existingSignature RollingSignature) RollingSignature {
+
+	s1 := existingSignature.Sig1
+	s2 := existingSignature.Sig2
+
+	s1 = s1 - int64(previousByte + nextByte)
+	s2 = s2 - (int64(previousByte) * length) + s1
+
+  res := RollingSignature{Sig1:s1, Sig2:s2}
+  return res
 }
