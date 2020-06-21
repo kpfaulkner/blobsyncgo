@@ -44,8 +44,8 @@ func NewBlobSync(accountName string, accountKey string) BlobSync {
 func (bs BlobSync) Upload(localFile *os.File, containerName string, blobName string ) error {
 
 	// does blob already exist?
-	doesBlobExist := false  // in reality, check in Azure.
-  doesSigExist := false // in reality, also check azure :)
+	doesBlobExist := true  // in reality, check in Azure.
+  doesSigExist := true// in reality, also check azure :)
 
   if doesBlobExist && doesSigExist {
   	// doing the tricky stuff.

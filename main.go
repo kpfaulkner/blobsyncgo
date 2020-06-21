@@ -45,7 +45,7 @@ func main() {
 	config := readConfig()
 	bs := blobsync.NewBlobSync(config.AccountName, config.AccountKey)
 
-	f,err := os.Open(`c:\temp\blobsync\test1.txt`)
+	f,err := os.Open(`c:\temp\blobsync\test1-modified.txt`)
 	if err != nil {
 		log.Fatalf("Unable to open file %s\n", err.Error())
 	}

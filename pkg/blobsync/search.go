@@ -44,10 +44,11 @@ func SearchLocalFileForSignature( localFile *os.File, sig SizeBasedCompleteSigna
 
   	// get all sigs of a particular size.
   	sigs := sig.Signatures[sigSize]
-  	newRemainingByteList, err := searchLocalFileForSignaturesOfGivenSize( sigs, localFile, remainingByteList, int64(sigSize), fileLength, signaturesToReuse)
+  	newRemainingByteList, newSignaturesToReuse, err := searchLocalFileForSignaturesOfGivenSize( sigs, localFile, remainingByteList, int64(sigSize), fileLength)
   	if err != nil {
   		return nil, err
 	  }
+	  signaturesToReuse = append(signaturesToReuse, newSignaturesToReuse...)
   	remainingByteList = newRemainingByteList
   }
 
@@ -99,13 +100,14 @@ func generateBlockLUT( sig CompleteSignature) map[RollingSignature][]BlockSig {
 // searchLocalFileForSignaturesOfGivenSize goes through the remaining byte ranges (initially will be 0 -> end of file),
 // and figure out which parts of the file match the signatures (ie can be reused)
 func searchLocalFileForSignaturesOfGivenSize(sig CompleteSignature, localFile *os.File, remainingByteList []RemainingBytes,
-																						 sigSize int64, fileLength int64, signaturesToReuse []BlockSig) ([]RemainingBytes, error) {
+																						 sigSize int64, fileLength int64 ) ([]RemainingBytes, []BlockSig, error) {
 	localFile.Seek(0,0)
 	windowSize := sigSize
 	newRemainingBytes := []RemainingBytes{}
 	sigLUT := generateBlockLUT(sig)
 	buffer := make([]byte, windowSize)
 	offset := int64(0)
+	signaturesToReuse := []BlockSig{}
 
 	// go through remaining byte ranges.
 	for _, byteRange := range remainingByteList {
@@ -119,7 +121,7 @@ func searchLocalFileForSignaturesOfGivenSize(sig CompleteSignature, localFile *o
 
 	    // if byteRange is smaller than the key we're using, then there cannot be a match so add
 	    // it to the newRemainingBytes list
-    	if byteRange.EndOffset - byteRange.BeginOffset +1 > windowSize {
+    	if byteRange.EndOffset - byteRange.BeginOffset +1 >= windowSize {
     		offset = byteRange.BeginOffset
 		    generateFreshSig := true
     		var currentSig RollingSignature
@@ -131,7 +133,7 @@ func searchLocalFileForSignaturesOfGivenSize(sig CompleteSignature, localFile *o
     				bytesRead,err := localFile.ReadAt(buffer, offset)
     				if err != nil {
 							fmt.Printf("Cannot read file: %s\n", err.Error())
-							return nil, err
+							return nil, nil, err
 				    }
 				    currentSig = CreateRollingSignature(buffer, bytesRead)
 			    } else {
@@ -144,6 +146,13 @@ func searchLocalFileForSignaturesOfGivenSize(sig CompleteSignature, localFile *o
 				    _,_ = localFile.ReadAt(b, offset + windowSize - 1)
 				    nextByte := b[0]
 				    currentSig = RollSignature(windowSize, previousByte, nextByte, currentSig)
+
+				    bytesRead,_ := localFile.ReadAt(buffer, offset)
+				    tempCompareSig := CreateRollingSignature(buffer, bytesRead)
+
+				    if currentSig == tempCompareSig {
+				    	fmt.Printf("hooray\n")
+				    }
 			    }
 
 			    _, ok := sigLUT[currentSig]
@@ -152,7 +161,7 @@ func searchLocalFileForSignaturesOfGivenSize(sig CompleteSignature, localFile *o
 			      bytesRead, err := localFile.ReadAt(buffer, offset)
 			      if err != nil {
 			      	fmt.Printf("Unable to read file:  %s\n", err.Error())
-			      	return nil, err
+			      	return nil, nil, err
 			      }
 
 			      md5Sig := CreateMD5Signature(buffer, bytesRead)
@@ -175,14 +184,17 @@ func searchLocalFileForSignaturesOfGivenSize(sig CompleteSignature, localFile *o
 			      }
 			    } else {
 				    // no match. Just increment offset and generate rolling sig.
-				    offset++;
-				    generateFreshSig = false;
+				    offset++
+				    generateFreshSig = false
 			    }
 
 			    // lack of do-while.
-			    if offset + windowSize < byteRange.EndOffset + 1 {
+			    if offset + windowSize > byteRange.EndOffset + 1 {
 			    	break
 			    }
+		    }
+		    if offset <= byteRange.EndOffset {
+		    	newRemainingBytes = append(newRemainingBytes, RemainingBytes{BeginOffset: oldEndOffset, EndOffset: byteRange.EndOffset})
 		    }
 	    } else {
 	    	newRemainingBytes = append(newRemainingBytes, byteRange)
@@ -191,7 +203,7 @@ func searchLocalFileForSignaturesOfGivenSize(sig CompleteSignature, localFile *o
 	    newRemainingBytes = append(newRemainingBytes, byteRange)
     }
 	}
-	return newRemainingBytes, nil
+	return newRemainingBytes, signaturesToReuse, nil
 }
 
 func getMatchingMD5Sig(matchingSigs []BlockSig, md5Sig [16]byte) *BlockSig {

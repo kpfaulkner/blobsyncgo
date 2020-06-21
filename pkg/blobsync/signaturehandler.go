@@ -50,7 +50,7 @@ func CreateMD5Signature(byteBlock []byte, length int) [md5.Size]byte {
 func generateBlockSig( buffer []byte, offset int64, blockSize int, id int ) (*BlockSig, error) {
 	bs := BlockSig{}
 	rollingSig := CreateRollingSignature(buffer, blockSize)
-	md5Sig := CreateMD5Signature(buffer, blockSize)
+	md5Sig := CreateMD5Signature(buffer[:blockSize], blockSize)
 
 	bs.RollingSig = rollingSig
 	bs.MD5Signature = md5Sig
@@ -117,7 +117,7 @@ func RollSignature( length int64, previousByte byte, nextByte byte, existingSign
 	s1 := existingSignature.Sig1
 	s2 := existingSignature.Sig2
 
-	s1 = s1 - int64(previousByte + nextByte)
+	s1 = s1 - int64(previousByte) + int64(nextByte)
 	s2 = s2 - (int64(previousByte) * length) + s1
 
   res := RollingSignature{Sig1:s1, Sig2:s2}
