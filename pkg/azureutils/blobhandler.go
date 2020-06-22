@@ -201,6 +201,22 @@ func (bh BlobHandler) SetBlobAttribute(containerName string, blobName string ) e
 }  */
 
 
+func (bh BlobHandler) BlobExist( containerName string, blobName string) bool {
+	containerURL,_ := bh.CreateContainerURL(containerName)
+	blobURL := containerURL.NewBlobURL(blobName)
+
+	ctx := context.Background() // This example uses a never-expiring context
+	_, err := blobURL.GetProperties(ctx, azblob.BlobAccessConditions{})
+
+	if err != nil {
+		azErr := err.(azblob.StorageError)
+		return azErr.Response().StatusCode != 404
+	}
+
+  return false
+}
+
+
 func (bh BlobHandler) DownloadBlob( file *os.File, containerName string, blobName string) error {
 	containerURL,_ := bh.CreateContainerURL(containerName)
 	blobURL := containerURL.NewBlobURL(blobName)

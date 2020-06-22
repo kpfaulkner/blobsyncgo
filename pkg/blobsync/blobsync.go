@@ -46,11 +46,7 @@ func NewBlobSync(accountName string, accountKey string) BlobSync {
 // or an error if something went boom.
 func (bs BlobSync) Upload(localFile *os.File, containerName string, blobName string ) error {
 
-	// does blob already exist?
-	doesBlobExist := true  // in reality, check in Azure.
-  doesSigExist := true// in reality, also check azure :)
-
-  if doesBlobExist && doesSigExist {
+  if bs.blobHandler.BlobExist(containerName, blobName) && bs.blobHandler.BlobExist(containerName, blobName+".sig") {
   	// doing the tricky stuff.
   	return bs.uploadDeltaOnly(localFile, containerName, blobName)
   } else {
@@ -80,9 +76,16 @@ func (bs BlobSync) uploadDeltaOnly(localFile *os.File, containerName, blobName s
   	return err
   }
 
-  _, err = bs.uploadDelta(localFile, searchResults, containerName, blobName )
+	allBlocks, err := bs.uploadDelta(localFile, searchResults, containerName, blobName )
 	if err != nil {
 		return err
+	}
+
+	sig,_ = signatures.CreateSignatureFromNewAndReusedBlocks(allBlocks)
+	err = bs.uploadSig(sig, containerName, blobName)
+	if err != nil {
+		fmt.Printf("Cannot upload sig:  %s\n", err.Error())
+		return  err
 	}
 
 	fmt.Printf("search results.... %v\n", searchResults)

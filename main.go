@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"github.com/kpfaulkner/blobsyncgo/pkg/blobsync"
 	"github.com/kpfaulkner/blobsyncgo/pkg/signatures"
@@ -42,20 +43,24 @@ func readConfig() signatures.Config {
 func main() {
 	fmt.Printf("so it begins....\n")
 
+	filePath := flag.String("file", "", "path to file to upload")
+	blobName := flag.String("blob", "", "name of blob")
+	containerName := flag.String("container", "", "name of container")
+
+	flag.Parse()
+
+	if *filePath == "" || *blobName == "" || *containerName == "" {
+		fmt.Printf("Error....\n")
+	}
+
 	config := readConfig()
 	bs := blobsync.NewBlobSync(config.AccountName, config.AccountKey)
 
-	f,err := os.Open(`c:\temp\blobsync\test1-modified.txt`)
+	f,err := os.Open(*filePath)
 	if err != nil {
 		log.Fatalf("Unable to open file %s\n", err.Error())
 	}
 
-	bs.Upload(f, "blobsync", "test1.txt")
+	bs.Upload(f, *containerName, *blobName)
 
-	sig, err := bs.DownloadSignatureForBlob("blobsync", "test1.txt")
-	if err != nil {
-		log.Fatalf("Unable to download sig %s\n", err.Error())
-	}
-
-	fmt.Printf("sig is %v\n", *sig)
 }

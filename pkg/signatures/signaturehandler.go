@@ -60,6 +60,31 @@ func GenerateBlockSig( buffer []byte, offset int64, blockSize int, id int ) (*Bl
 	return &bs, nil
 }
 
+func CreateSignatureFromNewAndReusedBlocks(allBlocks []UploadedBlock) (*SizeBasedCompleteSignature, error) {
+
+	sigLUT := make(map[int][]BlockSig)
+
+	sigList := []BlockSig{}
+	var ok bool
+	for _,newBlock := range allBlocks {
+		sigList, ok = sigLUT[newBlock.Sig.Size]
+		if !ok {
+			sigList = []BlockSig{}
+		}
+
+		sigList = append(sigList, newBlock.Sig)
+		sigLUT[newBlock.Sig.Size] = sigList
+	}
+
+	sizedBasedSignature :=  NewSizeBasedCompleteSignature()
+	for k,v := range sigLUT {
+		compSig := CompleteSignature{ SignatureList: v}
+		sizedBasedSignature.Signatures[k] = compSig
+	}
+
+  return &sizedBasedSignature, nil
+}
+
 // CreateSignatureFromScratch reads a file, creates a signature.
 func CreateSignatureFromScratch( localFile *os.File ) (*SizeBasedCompleteSignature, error) {
 
