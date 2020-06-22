@@ -1,4 +1,4 @@
-package blobsync
+package signatures
 
 import (
 	"crypto/md5"
@@ -47,7 +47,7 @@ func CreateMD5Signature(byteBlock []byte, length int) [md5.Size]byte {
 	return md5.Sum(byteBlock)
 }
 
-func generateBlockSig( buffer []byte, offset int64, blockSize int, id int ) (*BlockSig, error) {
+func GenerateBlockSig( buffer []byte, offset int64, blockSize int, id int ) (*BlockSig, error) {
 	bs := BlockSig{}
 	rollingSig := CreateRollingSignature(buffer, blockSize)
 	md5Sig := CreateMD5Signature(buffer[:blockSize], blockSize)
@@ -81,7 +81,7 @@ func CreateSignatureFromScratch( localFile *os.File ) (*SizeBasedCompleteSignatu
 			break
 		}
 
-		blockSig,err := generateBlockSig( buffer, offset, n, idCount)
+		blockSig,err := GenerateBlockSig( buffer, offset, n, idCount)
 		if err != nil {
 			fmt.Printf("error generatingBlockSig %s\n", err.Error())
 			return nil, err
@@ -120,6 +120,6 @@ func RollSignature( length int64, previousByte byte, nextByte byte, existingSign
 	s1 = s1 - int64(previousByte) + int64(nextByte)
 	s2 = s2 - (int64(previousByte) * length) + s1
 
-  res := RollingSignature{Sig1:s1, Sig2:s2}
+  res := RollingSignature{Sig1: s1, Sig2:s2}
   return res
 }

@@ -1,4 +1,4 @@
-package blobsync
+package signatures
 
 
 type RollingSignature struct {
@@ -6,14 +6,6 @@ type RollingSignature struct {
   Sig2 int64
 }
 
-type BlockSig struct {
-	Offset int64
-	Size int
-	RollingSig RollingSignature
-	MD5Signature [16]byte
-	BlockNo int
-
-}
 
 type Signature struct {
 
@@ -30,7 +22,7 @@ type SizeBasedCompleteSignature struct {
 }
 
 
-func NewSizeBasedCompleteSignature() SizeBasedCompleteSignature{
+func NewSizeBasedCompleteSignature() SizeBasedCompleteSignature {
 	s := SizeBasedCompleteSignature{}
 	s.Signatures = make(map[int]CompleteSignature)
 	return s
@@ -47,3 +39,4 @@ func (s SizeBasedCompleteSignature) SaveToFile( fileName string) error {
 
 	return nil
 }
+

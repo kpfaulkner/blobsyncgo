@@ -1,4 +1,4 @@
-package blobsync
+package signatures
 
 type RemainingBytes struct {
   BeginOffset int64   // inclusive.

@@ -3,13 +3,16 @@ package blobsync
 import (
 	"bytes"
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/kpfaulkner/blobsyncgo/pkg/azureutils"
+	"github.com/kpfaulkner/blobsyncgo/pkg/signatures"
 	"io"
 	"io/ioutil"
 	"os"
+	"sort"
 )
 
 type BlobSync struct {
@@ -25,7 +28,7 @@ type BlobSync struct {
 	blobHandler azureutils.BlobHandler
 
 	// signatures...
-	signatureHandler SignatureHandler
+	signatureHandler signatures.SignatureHandler
 }
 
 func NewBlobSync(accountName string, accountKey string) BlobSync {
@@ -33,7 +36,7 @@ func NewBlobSync(accountName string, accountKey string) BlobSync {
 	bs.blobAccountName = accountName
 	bs.blobKey = accountKey
 	bs.blobHandler = azureutils.NewBlobHandler(accountName, accountKey)
-  bs.signatureHandler = NewSignatureHandler()
+  bs.signatureHandler = signatures.NewSignatureHandler()
 
 	return bs
 }
@@ -77,16 +80,33 @@ func (bs BlobSync) uploadDeltaOnly(localFile *os.File, containerName, blobName s
   	return err
   }
 
-  fmt.Printf("search results.... %v\n", searchResults)
+  _, err = bs.uploadDelta(localFile, searchResults, containerName, blobName )
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("search results.... %v\n", searchResults)
 	return nil
 }
 
-func (bs BlobSync) uploadBlobAndSigAsNew(localFile *os.File, containerName, blobName string) error {
-	err := bs.uploadAsNewBlob(localFile, containerName, blobName)
+func (bs BlobSync) uploadBytes(remainingBytes signatures.RemainingBytes, localFile *os.File, containerName, blobName string) ([]signatures.UploadedBlock, error ){
+
+	bs.blobHandler.CreateContainerURL(containerName)
+	_, err := bs.blobHandler.UploadRemainingBytesAsBlocks(remainingBytes, localFile, containerName, blobName)
 	if err != nil {
-		fmt.Printf("Cannot upload as new blob: %s\n", err.Error())
-		return err
+		fmt.Printf("Unable to upload blob %s\n", err.Error())
+		return nil, err
 	}
+
+
+	return nil, nil
+}
+
+
+
+func (bs BlobSync) uploadBlobAndSigAsNew(localFile *os.File, containerName, blobName string) error {
+
+  bs.blobHandler.UploadBlob(localFile, containerName, blobName)
 
 	sig, err := bs.generateSig(localFile)
 	if err != nil {
@@ -142,24 +162,25 @@ func (bs BlobSync) setMD5ForBlob(md5 string, containerName, blobName string) err
 	return nil
 }
 
+/*
 func (bs BlobSync) uploadAsNewBlob(localFile *os.File, containerName, blobName string) error {
 
 	bs.blobHandler.CreateContainerURL(containerName)
-	err := bs.blobHandler.UploadBlob(localFile, containerName, blobName)
+	err := bs.blobHandler.UploadRemainingBytesAsBlocks(localFile, containerName, blobName)
 	if err != nil {
 		fmt.Printf("Unable to upload blob %s\n", err.Error())
 		return err
 	}
 
 	return nil
-}
+} */
 
-func (bs BlobSync) generateSig(localFile *os.File) (*SizeBasedCompleteSignature, error) {
+func (bs BlobSync) generateSig(localFile *os.File) (*signatures.SizeBasedCompleteSignature, error) {
 
 	// rewind to begining of file.
 	localFile.Seek(0,0)
 
-	sig, err := CreateSignatureFromScratch(localFile)
+	sig, err := signatures.CreateSignatureFromScratch(localFile)
 	if err != nil {
 		fmt.Printf("Cannot create signature %s\n", err.Error())
 		return nil, err
@@ -168,7 +189,7 @@ func (bs BlobSync) generateSig(localFile *os.File) (*SizeBasedCompleteSignature,
 }
 
 
-func (bs BlobSync) uploadSig(sig *SizeBasedCompleteSignature, containerName string, blobName string) error {
+func (bs BlobSync) uploadSig(sig *signatures.SizeBasedCompleteSignature, containerName string, blobName string) error {
 
 	sigBytes, _ := json.Marshal(sig)
 
@@ -203,7 +224,7 @@ func (bs BlobSync) DownloadBlobToFile( localFilePath string, containerName strin
 
 // DownloadSignatureForBlob. Takes the blob name, appends the ".sig" to it
 // returns the signature
-func (bs BlobSync) DownloadSignatureForBlob( containerName string, blobName string ) (*SizeBasedCompleteSignature, error) {
+func (bs BlobSync) DownloadSignatureForBlob( containerName string, blobName string ) (*signatures.SizeBasedCompleteSignature, error) {
 
 	buffer := bytes.Buffer{}
 
@@ -213,7 +234,7 @@ func (bs BlobSync) DownloadSignatureForBlob( containerName string, blobName stri
 		return nil, err
 	}
 
-	var sig SizeBasedCompleteSignature
+	var sig signatures.SizeBasedCompleteSignature
 	err = json.Unmarshal(buffer.Bytes(), &sig)
 	if err != nil {
 		fmt.Printf("Cannot unmarshal signature : %s\n",  err.Error())
@@ -222,5 +243,37 @@ func (bs BlobSync) DownloadSignatureForBlob( containerName string, blobName stri
 
 	return &sig, nil
 
+}
+
+func (bs BlobSync) uploadDelta(localFile *os.File, searchResults *signatures.SignatureSearchResults, containerName string, blobName string) ([]signatures.UploadedBlock, error) {
+
+	allUploadedBlocks := []signatures.UploadedBlock{}
+
+	for _,remainingBytes := range searchResults.ByteRangesToUpload {
+		uploadedBlockList, err := bs.blobHandler.UploadRemainingBytesAsBlocks(remainingBytes, localFile, containerName, blobName)
+		//uploadedBlockList, err := UploadBytes(remainingBytes, localFile, containerName, blobName)
+		if err != nil {
+			fmt.Printf("Cannot upload bytes: %s\n", err.Error())
+		}
+		allUploadedBlocks = append(allUploadedBlocks, uploadedBlockList...)
+	}
+
+	for _, sig := range searchResults.SignaturesToReuse {
+		blockID := base64.StdEncoding.EncodeToString(sig.MD5Signature[:])
+		allUploadedBlocks = append(allUploadedBlocks, signatures.UploadedBlock{BlockID: blockID, Offset: sig.Offset, Size: int64(sig.Size), Sig: sig,IsNew: false})
+	}
+
+	sort.Slice(allUploadedBlocks, func (i int, j int) bool {
+		return allUploadedBlocks[i].Offset < allUploadedBlocks[j].Offset
+	})
+
+	err := bs.blobHandler.PutBlockList(allUploadedBlocks, containerName, blobName)
+
+	return allUploadedBlocks, err
+}
+
+func UploadBytes(remainingBytes signatures.RemainingBytes, localFile *os.File, containingName string, blobName string) ([]signatures.UploadedBlock, error) {
+
+	return nil, nil
 }
 

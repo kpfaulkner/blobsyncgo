@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/kpfaulkner/blobsyncgo/pkg/blobsync"
-	"github.com/kpfaulkner/blobsyncgo/pkg/models"
+	"github.com/kpfaulkner/blobsyncgo/pkg/signatures"
 	"log"
 	"os"
 	"os/user"
@@ -13,7 +13,7 @@ import (
 // read config from multiple locations.
 // first try local dir...
 // if fails, try ~/.blobsync/config.json
-func readConfig() models.Config{
+func readConfig() signatures.Config {
 	var configFile *os.File
 	var err error
 	configFile, err = os.Open("config.json")
@@ -31,7 +31,7 @@ func readConfig() models.Config{
 	}
 	defer configFile.Close()
 
-	config := models.Config{}
+	config := signatures.Config{}
 	jsonParser := json.NewDecoder(configFile)
 	jsonParser.Decode(&config)
 
