@@ -10,7 +10,7 @@ import (
 const (
 
 	// Default signature size in bytes
-  SignatureSize int = 10000
+  SignatureSize int = 50000
 
 )
 

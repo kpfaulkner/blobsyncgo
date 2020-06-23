@@ -44,13 +44,13 @@ func NewBlobSync(accountName string, accountKey string) BlobSync {
 // Upload will upload the data from a reader.
 // It will return the signature of the file uploaded.
 // or an error if something went boom.
-func (bs BlobSync) Upload(localFile *os.File, containerName string, blobName string ) error {
+func (bs BlobSync) Upload(localFile *os.File, containerName string, blobName string, verbose bool ) error {
 
   if bs.blobHandler.BlobExist(containerName, blobName) && bs.blobHandler.BlobExist(containerName, blobName+".sig") {
   	// doing the tricky stuff.
-  	return bs.uploadDeltaOnly(localFile, containerName, blobName)
+  	return bs.uploadDeltaOnly(localFile, containerName, blobName, verbose)
   } else {
-  	return bs.uploadBlobAndSigAsNew(localFile, containerName, blobName)
+  	return bs.uploadBlobAndSigAsNew(localFile, containerName, blobName, verbose)
 	}
 
 	return nil
@@ -63,7 +63,7 @@ func (bs BlobSync) Upload(localFile *os.File, containerName string, blobName str
 // 4. upload blocks
 // 5. reconstruct blob from old and new blocks
 // 6. upload signature
-func (bs BlobSync) uploadDeltaOnly(localFile *os.File, containerName, blobName string) error {
+func (bs BlobSync) uploadDeltaOnly(localFile *os.File, containerName, blobName string, verbose bool) error {
 
   sig, err := bs.DownloadSignatureForBlob(containerName, blobName)
   if err != nil {
@@ -95,7 +95,7 @@ func (bs BlobSync) uploadDeltaOnly(localFile *os.File, containerName, blobName s
 func (bs BlobSync) uploadBytes(remainingBytes signatures.RemainingBytes, localFile *os.File, containerName, blobName string) ([]signatures.UploadedBlock, error ){
 
 	bs.blobHandler.CreateContainerURL(containerName)
-	_, err := bs.blobHandler.UploadRemainingBytesAsBlocks(remainingBytes, localFile, containerName, blobName)
+	_, err := bs.blobHandler.UploadRemainingBytesAsBlocks(remainingBytes, localFile, containerName, blobName, false)
 	if err != nil {
 		fmt.Printf("Unable to upload blob %s\n", err.Error())
 		return nil, err
@@ -107,9 +107,9 @@ func (bs BlobSync) uploadBytes(remainingBytes signatures.RemainingBytes, localFi
 
 
 
-func (bs BlobSync) uploadBlobAndSigAsNew(localFile *os.File, containerName, blobName string) error {
+func (bs BlobSync) uploadBlobAndSigAsNew(localFile *os.File, containerName, blobName string, verbose bool) error {
 
-  bs.blobHandler.UploadBlob(localFile, containerName, blobName)
+  bs.blobHandler.UploadBlob(localFile, containerName, blobName, verbose)
 
 	sig, err := bs.generateSig(localFile)
 	if err != nil {
@@ -199,7 +199,7 @@ func (bs BlobSync) uploadSig(sig *signatures.SizeBasedCompleteSignature, contain
 	// write to temp file? seems silly, but cant get streaming working.
 	_ = ioutil.WriteFile(`c:\temp\temp.sig`, sigBytes, 0644)
 	f,_ := os.Open(`c:\temp\temp.sig`)
-	bs.blobHandler.UploadBlob(f, containerName, blobName+".sig")
+	bs.blobHandler.UploadBlob(f, containerName, blobName+".sig", false)
 
 	return nil
 }
@@ -248,18 +248,29 @@ func (bs BlobSync) DownloadSignatureForBlob( containerName string, blobName stri
 
 }
 
+func DisplayUploadedBytes(uploadedBlocks []signatures.UploadedBlock) {
+	total := 0
+  for _,block := range uploadedBlocks {
+  	total += int(block.Size)
+  }
+
+  fmt.Printf("total is %d\n", total)
+}
+
 func (bs BlobSync) uploadDelta(localFile *os.File, searchResults *signatures.SignatureSearchResults, containerName string, blobName string) ([]signatures.UploadedBlock, error) {
 
 	allUploadedBlocks := []signatures.UploadedBlock{}
 
 	for _,remainingBytes := range searchResults.ByteRangesToUpload {
-		uploadedBlockList, err := bs.blobHandler.UploadRemainingBytesAsBlocks(remainingBytes, localFile, containerName, blobName)
+		uploadedBlockList, err := bs.blobHandler.UploadRemainingBytesAsBlocks(remainingBytes, localFile, containerName, blobName, false)
 		//uploadedBlockList, err := UploadBytes(remainingBytes, localFile, containerName, blobName)
 		if err != nil {
 			fmt.Printf("Cannot upload bytes: %s\n", err.Error())
 		}
 		allUploadedBlocks = append(allUploadedBlocks, uploadedBlockList...)
 	}
+
+	DisplayUploadedBytes(allUploadedBlocks)
 
 	for _, sig := range searchResults.SignaturesToReuse {
 		blockID := base64.StdEncoding.EncodeToString(sig.MD5Signature[:])

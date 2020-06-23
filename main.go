@@ -7,8 +7,10 @@ import (
 	"github.com/kpfaulkner/blobsyncgo/pkg/blobsync"
 	"github.com/kpfaulkner/blobsyncgo/pkg/signatures"
 	"log"
+	"net/http"
 	"os"
 	"os/user"
+	_ "net/http/pprof"
 )
 
 // read config from multiple locations.
@@ -43,9 +45,14 @@ func readConfig() signatures.Config {
 func main() {
 	fmt.Printf("so it begins....\n")
 
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
+
 	filePath := flag.String("file", "", "path to file to upload")
 	blobName := flag.String("blob", "", "name of blob")
 	containerName := flag.String("container", "", "name of container")
+	verbose := flag.Bool("verbose", false, "verbose")
 
 	flag.Parse()
 
@@ -61,6 +68,6 @@ func main() {
 		log.Fatalf("Unable to open file %s\n", err.Error())
 	}
 
-	bs.Upload(f, *containerName, *blobName)
+	bs.Upload(f, *containerName, *blobName, *verbose)
 
 }

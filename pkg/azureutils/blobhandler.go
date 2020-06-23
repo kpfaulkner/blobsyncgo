@@ -9,12 +9,20 @@ import (
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/kpfaulkner/blobsyncgo/pkg/signatures"
 	"sort"
+	"strings"
+	"time"
 
 	"io"
 	"log"
 	"net/url"
 	"os"
 )
+
+type UploadMessage struct {
+	Offset int64
+	BytesRead int
+	Data []byte
+}
 
 type BlobHandler struct {
 	accountName string
@@ -47,7 +55,7 @@ func (bh BlobHandler) CreateContainerURL( containerName string ) (*azblob.Contai
 	_, err := containerURL.Create(ctx, azblob.Metadata{}, azblob.PublicAccessNone)
 
   if err != nil {
-  	fmt.Printf("trying to create container that already exists (possibly) : %s\n", err.Error())
+  	//fmt.Printf("trying to create container that already exists (possibly) : %s\n", err.Error())
   	//return nil, err
   }
 
@@ -76,6 +84,40 @@ func (bh BlobHandler) PutBlockList( uploadedBlockList []signatures.UploadedBlock
 	_, err := blobURL.CommitBlockList(ctx, blockIDs,azblob.BlobHTTPHeaders{}, nil, azblob.BlobAccessConditions{} )
 	return err
 
+}
+
+// WriteBytes, returns an UploadedBlock struct, giving a summary
+func (bh BlobHandler) WriteBytesWithChannel( dataCh chan UploadMessage, uploadedBlockCh chan signatures.UploadedBlock, blobURL *azblob.BlockBlobURL) error {
+
+	for data := range dataCh {
+		if data.BytesRead == 0 {
+			fmt.Printf("no bytes!!!\n")
+		}
+		sig, err := signatures.GenerateBlockSig(data.Data, data.Offset, data.BytesRead, 0)
+		if err != nil {
+			log.Fatalf("Unable to generate block sig %s\n", err.Error())
+		}
+
+		blockID := base64.StdEncoding.EncodeToString(sig.MD5Signature[:])
+		newBlock := signatures.UploadedBlock{
+			BlockID:     blockID,
+			Offset:      data.Offset,
+			Sig:         *sig,
+			Size:        int64(data.BytesRead),
+			IsNew:       true,
+			IsDuplicate: false}
+
+		// not a dupe, upload it.
+		ctx := context.Background() // This example uses a never-expiring context
+		_, err = blobURL.StageBlock(ctx, blockID, bytes.NewReader(data.Data), azblob.LeaseAccessConditions{}, nil)
+		if err != nil {
+			log.Fatalf("Unable to stage block: %s\n", err.Error())
+		}
+		fmt.Printf("uploaded offset %d\n", data.Offset)
+		uploadedBlockCh <- newBlock
+	}
+
+	return nil
 }
 
 
@@ -112,12 +154,12 @@ func (bh BlobHandler) WriteBytes( offset int64, bytesRead int, data []byte, blob
 }
 
 func (bh BlobHandler) UploadBlob(localFile *os.File,
-	containerName string, blobName string ) error  {
+																 containerName string, blobName string, verbose bool ) error  {
 
 	stats, _ := localFile.Stat()
 	remainingBytes := signatures.RemainingBytes{BeginOffset: 0, EndOffset: stats.Size() - 1}
 
-	uploadBlockList, err := bh.UploadRemainingBytesAsBlocks(remainingBytes, localFile, containerName, blobName)
+	uploadBlockList, err := bh.UploadRemainingBytesAsBlocks(remainingBytes, localFile, containerName, blobName, verbose)
 	if err != nil {
 		return err
 	}
@@ -130,6 +172,13 @@ func (bh BlobHandler) UploadBlob(localFile *os.File,
 	return err
 }
 
+func (bh BlobHandler) launchConcurrentUploader(dataCh chan UploadMessage, uploadedBlockCh chan signatures.UploadedBlock, blobURL *azblob.BlockBlobURL) {
+
+	maxUploaders := 50
+	for i:=0; i<maxUploaders;i++ {
+		go bh.WriteBytesWithChannel(dataCh, uploadedBlockCh, blobURL)
+	}
+}
 
 // UploadBlobAsBlocks. Using os.File instead of a reader since want to use the UploadFileToBlockBlob
 // instead of stream (which uses reader).
@@ -137,7 +186,7 @@ func (bh BlobHandler) UploadBlob(localFile *os.File,
 // Only uploading sequentially for the moment
 /// Will optimise with a parallel version later.
 func (bh BlobHandler) UploadRemainingBytesAsBlocks( remainingBytes signatures.RemainingBytes, localFile *os.File,
-																										containerName string, blobName string ) ([]signatures.UploadedBlock, error ){
+																										containerName string, blobName string, verbose bool ) ([]signatures.UploadedBlock, error ){
 
   containerURL,_ := bh.CreateContainerURL(containerName)
 	blobURL := containerURL.NewBlockBlobURL(blobName)
@@ -145,6 +194,27 @@ func (bh BlobHandler) UploadRemainingBytesAsBlocks( remainingBytes signatures.Re
 
 	// loop and write in blocks.
 	offset := remainingBytes.BeginOffset
+  total := 0
+  dataCh := make(chan UploadMessage,10000)
+
+  // stupid large channel until I sort this shit out.
+	uploadedBlockCh := make(chan signatures.UploadedBlock,10000000)
+
+	concurrentUpload := true
+	// check if blobname ends in sig. Only parallel upload for non-sigs TODO(kpfaulkner) search out the bug.
+	if strings.Contains(blobName, ".sig") {
+		concurrentUpload = false
+	}
+
+	if concurrentUpload {
+		bh.launchConcurrentUploader(dataCh, uploadedBlockCh, &blobURL)
+		/*
+		go func() {
+			for uploadedBlock := range uploadedBlockCh {
+				uploadedBlockList = append(uploadedBlockList, uploadedBlock)
+			}
+		}() */
+	}
 
 	for offset <= remainingBytes.EndOffset {
 
@@ -164,12 +234,40 @@ func (bh BlobHandler) UploadRemainingBytesAsBlocks( remainingBytes signatures.Re
 				return nil, err
 			}
 
-			uploadedBlock, err := bh.WriteBytes( offset, bytesRead, bytesToRead, &blobURL, uploadedBlockList  )
-			if err != nil {
-				return nil, err
+			if bytesRead == 0 {
+				break // ??? good idea?
 			}
-			uploadedBlockList = append(uploadedBlockList, *uploadedBlock)
+
+			if concurrentUpload {
+				msg := UploadMessage{Data: bytesToRead, Offset: offset, BytesRead: bytesRead}
+				dataCh <- msg
+			} else {
+				uploadedBlock, err := bh.WriteBytes(offset, bytesRead, bytesToRead, &blobURL, uploadedBlockList)
+				if err != nil {
+					return nil, err
+				}
+				total += int(bytesRead)
+				if verbose {
+					fmt.Printf("Uploaded %d : total %d\n", bytesRead, total)
+				}
+				uploadedBlockList = append(uploadedBlockList, *uploadedBlock)
+			}
+
 			offset += sizeToRead
+		}
+	}
+	close(dataCh)
+
+	if concurrentUpload {
+		done := false
+		for !done {
+
+			select {
+			  case uploadedBlock := <- uploadedBlockCh:
+				  uploadedBlockList = append(uploadedBlockList, uploadedBlock)
+				  case <- time.After(10 * time.Second):
+				  	done = true
+			}
 		}
 	}
 
@@ -213,7 +311,7 @@ func (bh BlobHandler) BlobExist( containerName string, blobName string) bool {
 		return azErr.Response().StatusCode != 404
 	}
 
-  return false
+  return true
 }
 
 

@@ -110,8 +110,11 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 	offset := int64(0)
 	signaturesToReuse := []signatures.BlockSig{}
 
+  lastDisplayOffset := int64(0)
 	// go through remaining byte ranges.
 	for _, byteRange := range remainingByteList {
+		fmt.Printf("Searching %d to %d, for sig size %d\n", byteRange.BeginOffset, byteRange.EndOffset, sigSize)
+
     byteRangeSize := byteRange.EndOffset - byteRange.BeginOffset + 1
 
 		// if byte range is large... and signature size is small (what values???) then dont check.
@@ -128,7 +131,12 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
     		var currentSig signatures.RollingSignature
     		oldEndOffset := byteRange.BeginOffset
     		for {
+    			if offset > lastDisplayOffset {
+				    fmt.Printf("offset is %d\n", offset)
+				    lastDisplayOffset = offset + 100000
+			    }
 
+    			//generateFreshSig = true  // see what results we get.
     			// generate fresh sig... not really rolling
     			if generateFreshSig {
     				bytesRead,err := localFile.ReadAt(buffer, offset)
@@ -148,12 +156,11 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 				    nextByte := b[0]
 				    currentSig = signatures.RollSignature(windowSize, previousByte, nextByte, currentSig)
 
-				    bytesRead,_ := localFile.ReadAt(buffer, offset)
-				    tempCompareSig := signatures.CreateRollingSignature(buffer, bytesRead)
-
-				    if currentSig == tempCompareSig {
-				    	fmt.Printf("hooray\n")
-				    }
+				    //bytesRead,_ := localFile.ReadAt(buffer, offset)
+				    //tempCompareSig := signatures.CreateRollingSignature(buffer, bytesRead)
+            //if currentSig != tempCompareSig {
+            //	fmt.Printf("rolling vs new sig differ!!!\n")
+            //}
 			    }
 
 			    _, ok := sigLUT[currentSig]
