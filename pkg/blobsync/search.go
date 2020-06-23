@@ -2,7 +2,10 @@ package blobsync
 
 import (
 	"fmt"
+	"github.com/edsrzf/mmap-go"
 	"github.com/kpfaulkner/blobsyncgo/pkg/signatures"
+	"log"
+	"math"
 	"os"
 	"sort"
 )
@@ -39,9 +42,6 @@ func SearchLocalFileForSignature( localFile *os.File, sig signatures.SizeBasedCo
   remainingByteList = append(remainingByteList, signatures.RemainingBytes{ BeginOffset: 0, EndOffset: fileLength - 1})
 
   for _,sigSize := range signatureSizesArray {
-
-  	// seek back to begining of file.
-  	localFile.Seek(0,0)
 
   	// get all sigs of a particular size.
   	sigs := sig.Signatures[sigSize]
@@ -98,23 +98,37 @@ func generateBlockLUT( sig signatures.CompleteSignature) map[signatures.RollingS
   return blockLUT
 }
 
+
+// populate buffer...   make sure we do NOT go over maxOffset (inclusive)
+// way too much casting crap here.
+func populateBuffer(mm *mmap.MMap, offset int64, length int64, maxOffset int64) ([]byte,error) {
+  endOffset := int64(math.Min(float64(offset + length ), float64(maxOffset+1)))
+	buffer := (*mm)[offset:endOffset]
+	return buffer, nil
+}
+
 // searchLocalFileForSignaturesOfGivenSize goes through the remaining byte ranges (initially will be 0 -> end of file),
 // and figure out which parts of the file match the signatures (ie can be reused)
 func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, localFile *os.File, remainingByteList []signatures.RemainingBytes,
 																						 sigSize int64, fileLength int64 ) ([]signatures.RemainingBytes, []signatures.BlockSig, error) {
-	localFile.Seek(0,0)
+
 	windowSize := sigSize
 	newRemainingBytes := []signatures.RemainingBytes{}
 	sigLUT := generateBlockLUT(sig)
-	buffer := make([]byte, windowSize)
+	//buffer := make([]byte, windowSize)
 	offset := int64(0)
 	signaturesToReuse := []signatures.BlockSig{}
-
   lastDisplayOffset := int64(0)
+
+  mm,err  := mmap.Map(localFile, mmap.RDONLY, 0)
+  if err != nil {
+  	log.Fatalf("Unable to mmap the file: %s\n", err.Error())
+  }
+  defer mm.Unmap()
+
 	// go through remaining byte ranges.
 	for _, byteRange := range remainingByteList {
 		fmt.Printf("Searching %d to %d, for sig size %d\n", byteRange.BeginOffset, byteRange.EndOffset, sigSize)
-
     byteRangeSize := byteRange.EndOffset - byteRange.BeginOffset + 1
 
 		// if byte range is large... and signature size is small (what values???) then dont check.
@@ -130,6 +144,7 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 		    generateFreshSig := true
     		var currentSig signatures.RollingSignature
     		oldEndOffset := byteRange.BeginOffset
+
     		for {
     			if offset > lastDisplayOffset {
 				    fmt.Printf("offset is %d\n", offset)
@@ -139,21 +154,31 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
     			//generateFreshSig = true  // see what results we get.
     			// generate fresh sig... not really rolling
     			if generateFreshSig {
-    				bytesRead,err := localFile.ReadAt(buffer, offset)
+    				//bytesRead,err := localFile.ReadAt(buffer, offset)
+    				buffer, err := populateBuffer(&mm, offset, int64(signatures.SignatureSize), byteRange.EndOffset)
+    				bytesRead := len(buffer)
+    				//buffer = mm[offset:offset + int64(signatures.SignatureSize)]
+
+
     				if err != nil {
 							fmt.Printf("Cannot read file: %s\n", err.Error())
 							return nil, nil, err
 				    }
-				    currentSig = signatures.CreateRollingSignature(buffer, bytesRead)
+				    currentSig = signatures.CreateRollingSignature(buffer, int(bytesRead))
 			    } else {
+
 			    	// roll existing sig.
+			    	/*
 			    	localFile.Seek(offset-1, 0)
 			    	b := make([]byte,1)
 			    	_,_ = localFile.ReadAt(b,offset-1)
-			    	previousByte := b[0]
+			    	previousByte := b[0] */
+			    	previousByte := mm[offset-1]
 
+			    	/*
 				    _,_ = localFile.ReadAt(b, offset + windowSize - 1)
-				    nextByte := b[0]
+				    nextByte := b[0] */
+			    	nextByte := mm[offset + windowSize -1]
 				    currentSig = signatures.RollSignature(windowSize, previousByte, nextByte, currentSig)
 
 				    //bytesRead,_ := localFile.ReadAt(buffer, offset)
@@ -165,14 +190,18 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 
 			    _, ok := sigLUT[currentSig]
 			    if ok {
+			    	/*
 			      localFile.Seek(offset,0)
 			      bytesRead, err := localFile.ReadAt(buffer, offset)
 			      if err != nil {
 			      	fmt.Printf("Unable to read file:  %s\n", err.Error())
 			      	return nil, nil, err
-			      }
-
-			      md5Sig := signatures.CreateMD5Signature(buffer, bytesRead)
+			      } */
+			    	//buffer = mm[offset:offset + int64(signatures.SignatureSize)]
+						//bytesRead := signatures.SignatureSize
+				    buffer, _ := populateBuffer(&mm, offset, int64(signatures.SignatureSize), byteRange.EndOffset)
+				    bytesRead := len(buffer)
+				    md5Sig := signatures.CreateMD5Signature(buffer, int(bytesRead))
 			      sigForCurrentRollingSig := sigLUT[currentSig]
 			      sigMatchingRollingSigAndMD5 := getMatchingMD5Sig(sigForCurrentRollingSig, md5Sig)
 

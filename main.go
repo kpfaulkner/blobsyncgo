@@ -8,9 +8,9 @@ import (
 	"github.com/kpfaulkner/blobsyncgo/pkg/signatures"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/user"
-	_ "net/http/pprof"
 )
 
 // read config from multiple locations.

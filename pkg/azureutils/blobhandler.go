@@ -28,6 +28,8 @@ type BlobHandler struct {
 	accountName string
 	accountKey string
 	blobPipeline pipeline.Pipeline
+
+	TotalBytesUploaded int64
 }
 
 func NewBlobHandler(accountName string, accountKey string ) BlobHandler {
@@ -35,6 +37,7 @@ func NewBlobHandler(accountName string, accountKey string ) BlobHandler {
 	bh.accountName = accountName
 	bh.accountKey = accountKey
 	bh.blobPipeline = createBlobClientPipeline(accountName, accountKey)
+	bh.TotalBytesUploaded = 0
 	return bh
 }
 
@@ -114,6 +117,7 @@ func (bh BlobHandler) WriteBytesWithChannel( dataCh chan UploadMessage, uploaded
 			log.Fatalf("Unable to stage block: %s\n", err.Error())
 		}
 		fmt.Printf("uploaded offset %d\n", data.Offset)
+		bh.TotalBytesUploaded += int64(data.BytesRead)
 		uploadedBlockCh <- newBlock
 	}
 

@@ -88,7 +88,6 @@ func (bs BlobSync) uploadDeltaOnly(localFile *os.File, containerName, blobName s
 		return  err
 	}
 
-	fmt.Printf("search results.... %v\n", searchResults)
 	return nil
 }
 
@@ -270,6 +269,7 @@ func (bs BlobSync) uploadDelta(localFile *os.File, searchResults *signatures.Sig
 		allUploadedBlocks = append(allUploadedBlocks, uploadedBlockList...)
 	}
 
+	fmt.Printf("total bytes uploaded %d\n", bs.blobHandler.TotalBytesUploaded)
 	DisplayUploadedBytes(allUploadedBlocks)
 
 	for _, sig := range searchResults.SignaturesToReuse {
