@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/kpfaulkner/blobsyncgo/pkg/azureutils"
 	"github.com/kpfaulkner/blobsyncgo/pkg/signatures"
@@ -40,6 +41,184 @@ func NewBlobSync(accountName string, accountKey string) BlobSync {
 
 	return bs
 }
+
+func (bs BlobSync) doesFileExist(localFilePath string ) bool {
+	info, err := os.Stat(localFilePath)
+	if os.IsNotExist(err) {
+		return false
+	}
+
+	return !info.IsDir()
+}
+
+func (bs BlobSync) Download(localFilePath string, containerName string, blobName string, verbose bool ) error {
+
+	if bs.doesFileExist(localFilePath) {
+		// download sig for blob
+		blobSig, err := bs.DownloadSignatureForBlob(containerName, blobName)
+		if err != nil {
+			fmt.Printf("Unable to get sig for blob %s : %s\n", blobName, err)
+			return err
+		}
+
+		// search local file for blob sig details
+		localFile,_ := os.Open(localFilePath)
+
+		/*
+    localSig, err := bs.generateSig(localFile)
+		if err != nil {
+			fmt.Printf("Cannot create signature %s\n", err.Error())
+			return err
+		} */
+
+		searchResults, err := SearchLocalFileForSignature( localFile, *blobSig )
+		if err != nil {
+			return err
+		}
+
+		byteRangesToDownload,err := bs.GenerateByteRangesOfBlobToDownload(searchResults.SignaturesToReuse, blobSig, containerName, blobName)
+		if err != nil {
+			return err
+		}
+
+		bs.RegenerateBlob(containerName, blobName, byteRangesToDownload, localFilePath, searchResults.SignaturesToReuse, blobSig)
+
+
+		// regenerate blob
+
+	} else {
+		// download entire file.
+		err := bs.DownloadBlobToFile( localFilePath, containerName, blobName)
+    if err != nil {
+    	return err
+    }
+	}
+
+	return nil
+}
+
+func (bs BlobSync) RegenerateBlob(containerName string, blobName string, byteRangesToDownload []signatures.RemainingBytes,
+										localFilePath string, reusableBlockSignatures []signatures.BlockSig, blobSig *signatures.SizeBasedCompleteSignature) error {
+
+	allBlobSigs := signatures.ExpandSizeBasedCompleteSignature(*blobSig)
+	reusableBlobLUT := generateBlockLUTFromBlockSigs(reusableBlockSignatures)
+  offset := int64(0)
+
+  localFile,_ := os.Open(localFilePath)
+  newFile,_ := os.Create(localFilePath+".new")
+
+  for _,sig := range allBlobSigs {
+  	haveMatch := false
+  	localSig, ok := reusableBlobLUT[sig.RollingSig]
+  	if ok {
+		  matchingLocalSig, hasMatch := returnMatchingSig( localSig, sig)
+			if hasMatch {
+				buffer := make([]byte, matchingLocalSig.Size)
+				localFile.Seek( matchingLocalSig.Offset,0)
+				bytesRead, err := localFile.Read(buffer)
+				if err != nil {
+					return err
+				}
+				if bytesRead != matchingLocalSig.Size {
+					return errors.New("Unable to read correct length of file.")
+				}
+
+				newFile.Seek(sig.Offset,0)
+				bytesWritten, err := newFile.Write(buffer)
+				if err != nil {
+					return err
+				}
+				if bytesWritten != matchingLocalSig.Size {
+					return errors.New("Unable to write correct length of file.")
+				}
+
+				haveMatch = true
+				offset += int64(matchingLocalSig.Size)
+			}
+	  }
+
+	  if haveMatch{
+	  	byteRange,ok := getByteRangeForOffset( byteRangesToDownload, offset)
+	  	if ok {
+	  		blobBytes := bs.DownloadBytes(containerName, blobName, byteRange.BeginOffset, byteRange.EndOffset)
+	  		newFile.Seek(sig.Offset,0)
+	  		newFile.Write(blobBytes)
+	  		offset += byteRange.EndOffset - byteRange.BeginOffset + 1
+		  }
+	  }
+  }
+
+  // rename .new to origina..... TODO(kpfaulkner)
+  return nil
+}
+
+func (bs BlobSync) DownloadBytes(containerName string, blobName string, beginOffset int64, endOffset int64) []byte {
+
+	buffer := bytes.Buffer{}
+  bs.blobHandler.DownloadBlobRange(&buffer, containerName, blobName, beginOffset, endOffset)
+	return buffer.Bytes()
+}
+
+func getByteRangeForOffset(byteRanges []signatures.RemainingBytes, offset int64) (*signatures.RemainingBytes, bool) {
+	for _,br := range byteRanges {
+		if br.BeginOffset == offset {
+			return &br, true
+		}
+	}
+	return nil, false
+}
+
+// returnMatchingSig finds a matching sig based on MD5.
+// Returns pointer to the BlockSig and a bool indicating found or not.
+// Could technically just return nil to indicate not found, but will stick with
+// explicit bool for now.
+func returnMatchingSig(sigsToReuse []signatures.BlockSig, sig signatures.BlockSig) (*signatures.BlockSig, bool) {
+	for _,s := range sigsToReuse {
+		if s.MD5Signature == sig.MD5Signature {
+			return &s, true
+		}
+	}
+	return nil, false
+
+}
+
+func findMatchingSig( sigsToReuse []signatures.BlockSig, sig signatures.BlockSig) bool {
+	for _,s := range sigsToReuse {
+		if s.MD5Signature == sig.MD5Signature {
+			return true
+		}
+	}
+	return false
+}
+
+func (bs BlobSync) GenerateByteRangesOfBlobToDownload(sigsToReuseList []signatures.BlockSig,
+																											blobSig *signatures.SizeBasedCompleteSignature,
+																											containerName string, blobName string) ([]signatures.RemainingBytes, error) {
+
+  remainingBytesList := []signatures.RemainingBytes{}
+  allBlobSigs := signatures.ExpandSizeBasedCompleteSignature(*blobSig)
+  sort.Slice(sigsToReuseList, func (i int, j int) bool {
+  	return sigsToReuseList[i].Offset < sigsToReuseList[j].Offset
+  })
+
+  startOffsetToCopy := int64(0)
+  for _, sig := range allBlobSigs {
+  	haveMatchingSig := findMatchingSig(sigsToReuseList, sig)
+  	if !haveMatchingSig {
+  		remainingBytesList = append(remainingBytesList, signatures.RemainingBytes{BeginOffset: startOffsetToCopy, EndOffset: sig.Offset + int64(sig.Size) - 1})
+  		startOffsetToCopy = sig.Offset + int64(sig.Size)
+	  } else {
+
+	  	// why on earth do I have this here and not just 1 out side of the if statement? Will code as per original but will definitely
+	  	// need to revisit this.
+	  	startOffsetToCopy = sig.Offset + int64(sig.Size)
+	  }
+  }
+
+	return remainingBytesList, nil
+}
+
+
 
 // Upload will upload the data from a reader.
 // It will return the signature of the file uploaded.
@@ -285,6 +464,8 @@ func (bs BlobSync) uploadDelta(localFile *os.File, searchResults *signatures.Sig
 
 	return allUploadedBlocks, err
 }
+
+
 
 func UploadBytes(remainingBytes signatures.RemainingBytes, localFile *os.File, containingName string, blobName string) ([]signatures.UploadedBlock, error) {
 

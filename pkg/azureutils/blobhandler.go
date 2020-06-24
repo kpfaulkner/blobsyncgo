@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/Azure/azure-pipeline-go/pipeline"
 	"github.com/Azure/azure-storage-blob-go/azblob"
+	"github.com/edsrzf/mmap-go"
 	"github.com/kpfaulkner/blobsyncgo/pkg/signatures"
 	"sort"
 	"strings"
@@ -178,7 +179,7 @@ func (bh BlobHandler) UploadBlob(localFile *os.File,
 
 func (bh BlobHandler) launchConcurrentUploader(dataCh chan UploadMessage, uploadedBlockCh chan signatures.UploadedBlock, blobURL *azblob.BlockBlobURL) {
 
-	maxUploaders := 50
+	maxUploaders := 10
 	for i:=0; i<maxUploaders;i++ {
 		go bh.WriteBytesWithChannel(dataCh, uploadedBlockCh, blobURL)
 	}
@@ -196,13 +197,19 @@ func (bh BlobHandler) UploadRemainingBytesAsBlocks( remainingBytes signatures.Re
 	blobURL := containerURL.NewBlockBlobURL(blobName)
 	uploadedBlockList := []signatures.UploadedBlock{}
 
+	mm,err  := mmap.Map(localFile, mmap.RDONLY, 0)
+	if err != nil {
+		log.Fatalf("Unable to mmap the file: %s\n", err.Error())
+	}
+	defer mm.Unmap()
+
 	// loop and write in blocks.
 	offset := remainingBytes.BeginOffset
   total := 0
-  dataCh := make(chan UploadMessage,10000)
+  dataCh := make(chan UploadMessage,50)
 
   // stupid large channel until I sort this shit out.
-	uploadedBlockCh := make(chan signatures.UploadedBlock,10000000)
+	uploadedBlockCh := make(chan signatures.UploadedBlock,100000)
 
 	concurrentUpload := true
 	// check if blobname ends in sig. Only parallel upload for non-sigs TODO(kpfaulkner) search out the bug.
@@ -212,13 +219,10 @@ func (bh BlobHandler) UploadRemainingBytesAsBlocks( remainingBytes signatures.Re
 
 	if concurrentUpload {
 		bh.launchConcurrentUploader(dataCh, uploadedBlockCh, &blobURL)
-		/*
-		go func() {
-			for uploadedBlock := range uploadedBlockCh {
-				uploadedBlockList = append(uploadedBlockList, uploadedBlock)
-			}
-		}() */
 	}
+
+	// make out of loop
+	//bytesToRead := make([]byte, signatures.SignatureSize)
 
 	for offset <= remainingBytes.EndOffset {
 
@@ -227,26 +231,23 @@ func (bh BlobHandler) UploadRemainingBytesAsBlocks( remainingBytes signatures.Re
 			sizeToRead = int64(signatures.SignatureSize)
 		} else {
 			sizeToRead = remainingBytes.EndOffset - offset +1
+			//bytesToRead = make([]byte, sizeToRead)
 		}
 
 		if sizeToRead > 0 {
-			localFile.Seek(offset,0)
-			bytesToRead := make([]byte, sizeToRead)
 
-			bytesRead, err := localFile.ReadAt(bytesToRead, offset)
-			if err != nil {
-				return nil, err
-			}
-
+			//buffer, _ := PopulateBuffer(&mm,offset, sizeToRead, remainingBytes.EndOffset)
+			buffer := mm[offset:offset + sizeToRead]
+      bytesRead := len(buffer)
 			if bytesRead == 0 {
 				break // ??? good idea?
 			}
 
 			if concurrentUpload {
-				msg := UploadMessage{Data: bytesToRead, Offset: offset, BytesRead: bytesRead}
+				msg := UploadMessage{Data: buffer, Offset: offset, BytesRead: bytesRead}
 				dataCh <- msg
 			} else {
-				uploadedBlock, err := bh.WriteBytes(offset, bytesRead, bytesToRead, &blobURL, uploadedBlockList)
+				uploadedBlock, err := bh.WriteBytes(offset, bytesRead, buffer, &blobURL, uploadedBlockList)
 				if err != nil {
 					return nil, err
 				}
@@ -328,11 +329,23 @@ func (bh BlobHandler) DownloadBlob( file *os.File, containerName string, blobNam
 }
 
 func (bh BlobHandler) DownloadBlobToBuffer( buffer *bytes.Buffer, containerName string, blobName string) error {
+	return bh.DownloadBlobRange(buffer, containerName, blobName, 0, azblob.CountToEnd)
+}
+
+// DownloadBlobRange downloads a subsection of a blob.
+func (bh BlobHandler) DownloadBlobRange(  buffer *bytes.Buffer, containerName string, blobName string, beginOffset int64, endOffset int64) error {
 	containerURL,_ := bh.CreateContainerURL(containerName)
 	blobURL := containerURL.NewBlobURL(blobName)
 
 	ctx := context.Background() // This example uses a never-expiring context
-	downloadResponse, err := blobURL.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false)
+
+	count := int64(0)
+	// only recalculate count if NOT reading to end of file.
+	if endOffset != azblob.CountToEnd {
+		count = endOffset - beginOffset
+	}
+
+	downloadResponse, err := blobURL.Download(ctx, beginOffset, count, azblob.BlobAccessConditions{}, false)
 	bodyStream := downloadResponse.Body(azblob.RetryReaderOptions{MaxRetryRequests: 20})
 	_, err = buffer.ReadFrom(bodyStream)
 	return err

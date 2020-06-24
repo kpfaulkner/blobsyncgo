@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 )
 
 const (
@@ -58,6 +59,20 @@ func GenerateBlockSig( buffer []byte, offset int64, blockSize int, id int ) (*Bl
 	bs.BlockNo = id
 	bs.Size = blockSize
 	return &bs, nil
+}
+
+// expand to be an array of BlockSig ordered by Offset.
+func ExpandSizeBasedCompleteSignature(sig SizeBasedCompleteSignature) []BlockSig {
+	l := []BlockSig{}
+	for _,v := range sig.Signatures {
+		l = append(l, v.SignatureList...)
+	}
+
+  sort.Slice( l, func (i int, j int) bool {
+  	return l[i].Offset < l[j].Offset
+  })
+
+  return l
 }
 
 func CreateSignatureFromNewAndReusedBlocks(allBlocks []UploadedBlock) (*SizeBasedCompleteSignature, error) {

@@ -3,9 +3,9 @@ package blobsync
 import (
 	"fmt"
 	"github.com/edsrzf/mmap-go"
+	"github.com/kpfaulkner/blobsyncgo/pkg/azureutils"
 	"github.com/kpfaulkner/blobsyncgo/pkg/signatures"
 	"log"
-	"math"
 	"os"
 	"sort"
 )
@@ -58,24 +58,24 @@ func SearchLocalFileForSignature( localFile *os.File, sig signatures.SizeBasedCo
 	return &searchResults, nil
 }
 
-func generateBlockLUT( sig signatures.CompleteSignature) map[signatures.RollingSignature][]signatures.BlockSig {
-  blockLUT := make(map[signatures.RollingSignature][]signatures.BlockSig)
+func generateBlockLUTFromBlockSigs( bs []signatures.BlockSig) map[signatures.RollingSignature][]signatures.BlockSig {
+	blockLUT := make(map[signatures.RollingSignature][]signatures.BlockSig)
 
-  bsl := []signatures.BlockSig{}
-  var ok bool
-  for _, element := range sig.SignatureList {
-     bsl, ok = blockLUT[element.RollingSig]
-     addToList := false
-     if ok {
+	bsl := []signatures.BlockSig{}
+	var ok bool
+	for _, element := range bs {
+		bsl, ok = blockLUT[element.RollingSig]
+		addToList := false
+		if ok {
 
-     	// rolling sig exists in blockLUT. Go and check if MD5's match.
-     	// if they do NOT match (ie its a new block with same rolling sig but not the same MD5) then
-     	// add to array which is the map value.
+			// rolling sig exists in blockLUT. Go and check if MD5's match.
+			// if they do NOT match (ie its a new block with same rolling sig but not the same MD5) then
+			// add to array which is the map value.
 			for _, bs := range bsl {
-        if bs.MD5Signature != element.MD5Signature {
-        	addToList = true
-        	break
-        }
+				if bs.MD5Signature != element.MD5Signature {
+					addToList = true
+					break
+				}
 			}
 
 			if addToList {
@@ -85,26 +85,17 @@ func generateBlockLUT( sig signatures.CompleteSignature) map[signatures.RollingS
 				// otherwise, ignore it... we already have something with exact same rolling and md5 sigs.
 			}
 
-     } else {
+		} else {
 
-     	// doesn't exist in LUT... create it.
-     	bsl := []signatures.BlockSig{}
-     	bsl = append(bsl, element)
-     	blockLUT[element.RollingSig] = bsl
+			// doesn't exist in LUT... create it.
+			bsl := []signatures.BlockSig{}
+			bsl = append(bsl, element)
+			blockLUT[element.RollingSig] = bsl
 
-     }
-  }
+		}
+	}
 
-  return blockLUT
-}
-
-
-// populate buffer...   make sure we do NOT go over maxOffset (inclusive)
-// way too much casting crap here.
-func populateBuffer(mm *mmap.MMap, offset int64, length int64, maxOffset int64) ([]byte,error) {
-  endOffset := int64(math.Min(float64(offset + length ), float64(maxOffset+1)))
-	buffer := (*mm)[offset:endOffset]
-	return buffer, nil
+	return blockLUT
 }
 
 // searchLocalFileForSignaturesOfGivenSize goes through the remaining byte ranges (initially will be 0 -> end of file),
@@ -114,7 +105,7 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 
 	windowSize := sigSize
 	newRemainingBytes := []signatures.RemainingBytes{}
-	sigLUT := generateBlockLUT(sig)
+	sigLUT := generateBlockLUTFromBlockSigs(sig.SignatureList)
 	//buffer := make([]byte, windowSize)
 	offset := int64(0)
 	signaturesToReuse := []signatures.BlockSig{}
@@ -154,16 +145,12 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
     			//generateFreshSig = true  // see what results we get.
     			// generate fresh sig... not really rolling
     			if generateFreshSig {
-    				//bytesRead,err := localFile.ReadAt(buffer, offset)
-    				buffer, err := populateBuffer(&mm, offset, int64(signatures.SignatureSize), byteRange.EndOffset)
-    				bytesRead := len(buffer)
-    				//buffer = mm[offset:offset + int64(signatures.SignatureSize)]
-
-
+    				buffer, err := azureutils.PopulateBuffer(&mm, offset, int64(signatures.SignatureSize), byteRange.EndOffset)
     				if err != nil {
 							fmt.Printf("Cannot read file: %s\n", err.Error())
 							return nil, nil, err
 				    }
+				    bytesRead := len(buffer)
 				    currentSig = signatures.CreateRollingSignature(buffer, int(bytesRead))
 			    } else {
 
@@ -199,7 +186,7 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 			      } */
 			    	//buffer = mm[offset:offset + int64(signatures.SignatureSize)]
 						//bytesRead := signatures.SignatureSize
-				    buffer, _ := populateBuffer(&mm, offset, int64(signatures.SignatureSize), byteRange.EndOffset)
+				    buffer, _ := azureutils.PopulateBuffer(&mm, offset, int64(signatures.SignatureSize), byteRange.EndOffset)
 				    bytesRead := len(buffer)
 				    md5Sig := signatures.CreateMD5Signature(buffer, int(bytesRead))
 			      sigForCurrentRollingSig := sigLUT[currentSig]
