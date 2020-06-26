@@ -49,6 +49,8 @@ func main() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
 
+	download := flag.Bool("download", false, "Download blob to local, merging with file indicated")
+	upload := flag.Bool("upload", false, "Upload file specified to blob/container")
 	filePath := flag.String("file", "", "path to file to upload")
 	blobName := flag.String("blob", "", "name of blob")
 	containerName := flag.String("container", "", "name of container")
@@ -58,16 +60,32 @@ func main() {
 
 	if *filePath == "" || *blobName == "" || *containerName == "" {
 		fmt.Printf("Error....\n")
+		return
+	}
+
+	if !(*download) && !(*upload) {
+		fmt.Printf("Need to specify upload or downloads\n")
+		return
 	}
 
 	config := readConfig()
 	bs := blobsync.NewBlobSync(config.AccountName, config.AccountKey)
 
-	f,err := os.Open(*filePath)
-	if err != nil {
-		log.Fatalf("Unable to open file %s\n", err.Error())
+	if *upload {
+		f, err := os.Open(*filePath)
+		if err != nil {
+			log.Fatalf("Unable to open file %s\n", err.Error())
+		}
+
+		bs.Upload(f, *containerName, *blobName, *verbose)
 	}
 
-	bs.Upload(f, *containerName, *blobName, *verbose)
+	if *download {
+
+		err := bs.Download(*filePath, *containerName, *blobName, *verbose)
+		if err != nil {
+			fmt.Printf("ERROR while downloading : %s\n", err.Error())
+		}
+	}
 
 }

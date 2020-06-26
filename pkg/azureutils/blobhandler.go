@@ -31,6 +31,7 @@ type BlobHandler struct {
 	blobPipeline pipeline.Pipeline
 
 	TotalBytesUploaded int64
+	TotalBytesDownloaded int64
 }
 
 func NewBlobHandler(accountName string, accountKey string ) BlobHandler {
@@ -39,6 +40,7 @@ func NewBlobHandler(accountName string, accountKey string ) BlobHandler {
 	bh.accountKey = accountKey
 	bh.blobPipeline = createBlobClientPipeline(accountName, accountKey)
 	bh.TotalBytesUploaded = 0
+	bh.TotalBytesDownloaded = 0
 	return bh
 }
 
@@ -91,7 +93,7 @@ func (bh BlobHandler) PutBlockList( uploadedBlockList []signatures.UploadedBlock
 }
 
 // WriteBytes, returns an UploadedBlock struct, giving a summary
-func (bh BlobHandler) WriteBytesWithChannel( dataCh chan UploadMessage, uploadedBlockCh chan signatures.UploadedBlock, blobURL *azblob.BlockBlobURL) error {
+func (bh *BlobHandler) WriteBytesWithChannel( dataCh chan UploadMessage, uploadedBlockCh chan signatures.UploadedBlock, blobURL *azblob.BlockBlobURL) error {
 
 	for data := range dataCh {
 		if data.BytesRead == 0 {
@@ -333,21 +335,26 @@ func (bh BlobHandler) DownloadBlobToBuffer( buffer *bytes.Buffer, containerName 
 }
 
 // DownloadBlobRange downloads a subsection of a blob.
-func (bh BlobHandler) DownloadBlobRange(  buffer *bytes.Buffer, containerName string, blobName string, beginOffset int64, endOffset int64) error {
+func (bh *BlobHandler) DownloadBlobRange(  buffer *bytes.Buffer, containerName string, blobName string, beginOffset int64, endOffset int64) error {
 	containerURL,_ := bh.CreateContainerURL(containerName)
 	blobURL := containerURL.NewBlobURL(blobName)
 
 	ctx := context.Background() // This example uses a never-expiring context
 
 	count := int64(0)
+
 	// only recalculate count if NOT reading to end of file.
 	if endOffset != azblob.CountToEnd {
-		count = endOffset - beginOffset
+		count = endOffset - beginOffset +1
 	}
 
 	downloadResponse, err := blobURL.Download(ctx, beginOffset, count, azblob.BlobAccessConditions{}, false)
 	bodyStream := downloadResponse.Body(azblob.RetryReaderOptions{MaxRetryRequests: 20})
 	_, err = buffer.ReadFrom(bodyStream)
+
+	bh.TotalBytesDownloaded += count
+	fmt.Printf("downloaded %d, total of %d\n", count, bh.TotalBytesDownloaded)
+
 	return err
 }
 

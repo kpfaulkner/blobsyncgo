@@ -58,6 +58,46 @@ func SearchLocalFileForSignature( localFile *os.File, sig signatures.SizeBasedCo
 	return &searchResults, nil
 }
 
+// hardest part...
+// Search local file for all the data that is already in azure blob storage.
+// Then determine which parts are already local and do NOT need to be downloaded again.
+func SearchLocalFileForSignatureForDownload( localFile *os.File, sig signatures.SizeBasedCompleteSignature) (*signatures.SignatureSearchResults, error) {
+
+	searchResults := signatures.NewSignatureSearchResults()
+	stats, err := localFile.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	fileLength := stats.Size()
+
+	// signatures we can use.
+	signaturesToReuse := []signatures.BlockSig{}
+	signatureSizesArray := getSignatureSizesDescending(sig)
+
+	remainingByteList := []signatures.RemainingBytes{}
+	remainingByteList = append(remainingByteList, signatures.RemainingBytes{ BeginOffset: 0, EndOffset: fileLength - 1})
+
+	for _,sigSize := range signatureSizesArray {
+
+		// get all sigs of a particular size.
+		sigs := sig.Signatures[sigSize]
+
+		// if sigsize <= 100 then just copy the bytes...  maybe even do for 1000?
+		if sigSize > 100 {
+			newSignaturesToReuse, err := searchLocalFileForSignaturesOfGivenSizeForDownload(sigs, localFile, int64(sigSize))
+			if err != nil {
+				return nil, err
+			}
+			signaturesToReuse = append(signaturesToReuse, newSignaturesToReuse...)
+		}
+	}
+
+	searchResults.ByteRangesToUpload = remainingByteList
+	searchResults.SignaturesToReuse = signaturesToReuse
+	return &searchResults, nil
+}
+
 func generateBlockLUTFromBlockSigs( bs []signatures.BlockSig) map[signatures.RollingSignature][]signatures.BlockSig {
 	blockLUT := make(map[signatures.RollingSignature][]signatures.BlockSig)
 
@@ -142,10 +182,13 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 				    lastDisplayOffset = offset + 100000
 			    }
 
-    			//generateFreshSig = true  // see what results we get.
+			    if offset > 1821060 {
+			    	fmt.Printf("boo\n")
+			    }
+
     			// generate fresh sig... not really rolling
     			if generateFreshSig {
-    				buffer, err := azureutils.PopulateBuffer(&mm, offset, int64(signatures.SignatureSize), byteRange.EndOffset)
+    				buffer, err := azureutils.PopulateBuffer(&mm, offset, int64(windowSize), byteRange.EndOffset)
     				if err != nil {
 							fmt.Printf("Cannot read file: %s\n", err.Error())
 							return nil, nil, err
@@ -168,11 +211,19 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 			    	nextByte := mm[offset + windowSize -1]
 				    currentSig = signatures.RollSignature(windowSize, previousByte, nextByte, currentSig)
 
-				    //bytesRead,_ := localFile.ReadAt(buffer, offset)
-				    //tempCompareSig := signatures.CreateRollingSignature(buffer, bytesRead)
-            //if currentSig != tempCompareSig {
-            //	fmt.Printf("rolling vs new sig differ!!!\n")
-            //}
+
+				    // just for testing idea.
+				    buffer, err := azureutils.PopulateBuffer(&mm, offset, int64(windowSize), byteRange.EndOffset)
+				    if err != nil {
+					    fmt.Printf("Cannot read file: %s\n", err.Error())
+					    return nil, nil, err
+				    }
+
+				    bytesRead := len(buffer)
+				    tempCompareSig := signatures.CreateRollingSignature(buffer, bytesRead)
+            if currentSig != tempCompareSig {
+            	fmt.Printf("rolling vs new sig differ!!!\n")
+            }
 			    }
 
 			    _, ok := sigLUT[currentSig]
@@ -186,19 +237,19 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 			      } */
 			    	//buffer = mm[offset:offset + int64(signatures.SignatureSize)]
 						//bytesRead := signatures.SignatureSize
-				    buffer, _ := azureutils.PopulateBuffer(&mm, offset, int64(signatures.SignatureSize), byteRange.EndOffset)
+				    buffer, _ := azureutils.PopulateBuffer(&mm, offset, int64(windowSize), byteRange.EndOffset)
 				    bytesRead := len(buffer)
 				    md5Sig := signatures.CreateMD5Signature(buffer, int(bytesRead))
 			      sigForCurrentRollingSig := sigLUT[currentSig]
-			      sigMatchingRollingSigAndMD5 := getMatchingMD5Sig(sigForCurrentRollingSig, md5Sig)
+			      sigMatchingRollingSigAndMD5, sigFound := getMatchingMD5Sig(sigForCurrentRollingSig, md5Sig)
 
-			      if sigMatchingRollingSigAndMD5 != nil {
+			      if sigFound {
 			      	if oldEndOffset != offset {
 			      		newRemainingBytes = append(newRemainingBytes, signatures.RemainingBytes{BeginOffset: oldEndOffset, EndOffset: offset-1})
 				      }
 
 				      sigMatchingRollingSigAndMD5.Offset = offset
-				      signaturesToReuse = append(signaturesToReuse, *sigMatchingRollingSigAndMD5)
+				      signaturesToReuse = append(signaturesToReuse, sigMatchingRollingSigAndMD5)
 				      offset += windowSize
 				      generateFreshSig = true
 				      oldEndOffset = offset
@@ -230,12 +281,95 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 	return newRemainingBytes, signaturesToReuse, nil
 }
 
-func getMatchingMD5Sig(matchingSigs []signatures.BlockSig, md5Sig [16]byte) *signatures.BlockSig {
+// searchLocalFileForSignaturesOfGivenSizeForDownload goes through ENTIRE file looking for matches to
+// existing blob signatures. This may be excessive, but could provide useful for minimising how much we're downloading.
+func searchLocalFileForSignaturesOfGivenSizeForDownload(sig signatures.CompleteSignature, localFile *os.File,
+	sigSize int64) ([]signatures.BlockSig, error) {
+
+	windowSize := sigSize
+	blobSigLUT := generateBlockLUTFromBlockSigs(sig.SignatureList)
+	//buffer := make([]byte, windowSize)
+
+	signaturesToReuse := []signatures.BlockSig{}
+	lastDisplayOffset := int64(0)
+	stats,_ := localFile.Stat()
+	fileLength := stats.Size()
+	var currentSig signatures.RollingSignature
+
+	mm,err  := mmap.Map(localFile, mmap.RDONLY, 0)
+	if err != nil {
+		log.Fatalf("Unable to mmap the file: %s\n", err.Error())
+	}
+	defer mm.Unmap()
+
+	offset := int64(0)
+	generateFreshSig := true
+	for offset + sigSize < fileLength {
+
+		if offset > lastDisplayOffset {
+			fmt.Printf("offset is %d\n", offset)
+			lastDisplayOffset = offset + 100000
+		}
+
+		// generate fresh sig... not really rolling
+		if generateFreshSig {
+			buffer, err := azureutils.PopulateBuffer(&mm, offset, int64(windowSize), fileLength-1)
+			if err != nil {
+				fmt.Printf("Cannot read file: %s\n", err.Error())
+				return nil, err
+			}
+			bytesRead := len(buffer)
+			currentSig = signatures.CreateRollingSignature(buffer, int(bytesRead))
+			generateFreshSig = false
+		} else {
+			previousByte := mm[offset-1]
+			nextByte := mm[offset + windowSize -1]
+			currentSig = signatures.RollSignature(windowSize, previousByte, nextByte, currentSig)
+
+			/*
+			// just for testing idea.
+			buffer, err := azureutils.PopulateBuffer(&mm, offset, int64(windowSize), fileLength -1)
+			if err != nil {
+				fmt.Printf("Cannot read file: %s\n", err.Error())
+				return nil, err
+			}
+
+			bytesRead := len(buffer)
+			tempCompareSig := signatures.CreateRollingSignature(buffer, bytesRead)
+			if currentSig != tempCompareSig {
+				fmt.Printf("rolling vs new sig differ!!!\n")
+			} */
+		}
+
+		_, ok := blobSigLUT[currentSig]
+		if ok {
+			buffer, _ := azureutils.PopulateBuffer(&mm, offset, int64(windowSize), fileLength-1)
+			bytesRead := len(buffer)
+			md5Sig := signatures.CreateMD5Signature(buffer, int(bytesRead))
+			sigForCurrentRollingSig := blobSigLUT[currentSig]
+			sigMatchingRollingSigAndMD5, sigFound := getMatchingMD5Sig(sigForCurrentRollingSig, md5Sig)
+
+			if sigFound {
+
+				// this is a copy of the sig.
+				// Want LOCAL offset.
+				sigMatchingRollingSigAndMD5.Offset = offset
+				signaturesToReuse = append(signaturesToReuse, sigMatchingRollingSigAndMD5)
+			}
+		}
+    offset++
+	}
+	return signaturesToReuse, nil
+}
+
+func getMatchingMD5Sig(matchingSigs []signatures.BlockSig, md5Sig [16]byte) (signatures.BlockSig,bool) {
 	for _,s := range matchingSigs {
 		if s.MD5Signature == md5Sig {
-			return &s
+			return s,true
 		}
 	}
 
-  return nil
+	// HATE returning a constructed empty,
+	// but need a copy and obviously dont want a pointer.
+  return signatures.BlockSig{}, false
 }

@@ -71,7 +71,7 @@ func (bs BlobSync) Download(localFilePath string, containerName string, blobName
 			return err
 		} */
 
-		searchResults, err := SearchLocalFileForSignature( localFile, *blobSig )
+		searchResults, err := SearchLocalFileForSignatureForDownload( localFile, *blobSig )
 		if err != nil {
 			return err
 		}
@@ -108,6 +108,11 @@ func (bs BlobSync) RegenerateBlob(containerName string, blobName string, byteRan
   newFile,_ := os.Create(localFilePath+".new")
 
   for _,sig := range allBlobSigs {
+
+  	if sig.Size < 20000 {
+  		fmt.Printf("here")
+	  }
+
   	haveMatch := false
   	localSig, ok := reusableBlobLUT[sig.RollingSig]
   	if ok {
@@ -119,10 +124,12 @@ func (bs BlobSync) RegenerateBlob(containerName string, blobName string, byteRan
 				if err != nil {
 					return err
 				}
+				fmt.Printf("%d bytes read\n", bytesRead)
+				/*
 				if bytesRead != matchingLocalSig.Size {
 					return errors.New("Unable to read correct length of file.")
 				}
-
+        */
 				newFile.Seek(sig.Offset,0)
 				bytesWritten, err := newFile.Write(buffer)
 				if err != nil {
@@ -137,7 +144,7 @@ func (bs BlobSync) RegenerateBlob(containerName string, blobName string, byteRan
 			}
 	  }
 
-	  if haveMatch{
+	  if !haveMatch{
 	  	byteRange,ok := getByteRangeForOffset( byteRangesToDownload, offset)
 	  	if ok {
 	  		blobBytes := bs.DownloadBytes(containerName, blobName, byteRange.BeginOffset, byteRange.EndOffset)
@@ -191,14 +198,14 @@ func findMatchingSig( sigsToReuse []signatures.BlockSig, sig signatures.BlockSig
 	return false
 }
 
-func (bs BlobSync) GenerateByteRangesOfBlobToDownload(sigsToReuseList []signatures.BlockSig,
+func (bs BlobSync) GenerateByteRangesOfBlobToDownloadORIG(sigsToReuseList []signatures.BlockSig,
 																											blobSig *signatures.SizeBasedCompleteSignature,
 																											containerName string, blobName string) ([]signatures.RemainingBytes, error) {
 
   remainingBytesList := []signatures.RemainingBytes{}
   allBlobSigs := signatures.ExpandSizeBasedCompleteSignature(*blobSig)
-  sort.Slice(sigsToReuseList, func (i int, j int) bool {
-  	return sigsToReuseList[i].Offset < sigsToReuseList[j].Offset
+  sort.Slice(allBlobSigs, func (i int, j int) bool {
+  	return allBlobSigs[i].Offset < allBlobSigs[j].Offset
   })
 
   startOffsetToCopy := int64(0)
@@ -217,6 +224,34 @@ func (bs BlobSync) GenerateByteRangesOfBlobToDownload(sigsToReuseList []signatur
 
 	return remainingBytesList, nil
 }
+
+func (bs BlobSync) GenerateByteRangesOfBlobToDownload(sigsToReuseList []signatures.BlockSig,
+	blobSig *signatures.SizeBasedCompleteSignature,
+	containerName string, blobName string) ([]signatures.RemainingBytes, error) {
+
+	remainingBytesList := []signatures.RemainingBytes{}
+	allBlobSigs := signatures.ExpandSizeBasedCompleteSignature(*blobSig)
+	sort.Slice(allBlobSigs, func (i int, j int) bool {
+		return allBlobSigs[i].Offset < allBlobSigs[j].Offset
+	})
+
+	startOffsetToCopy := int64(0)
+	for _, sig := range allBlobSigs {
+		haveMatchingSig := findMatchingSig(sigsToReuseList, sig)
+		if !haveMatchingSig {
+			remainingBytesList = append(remainingBytesList, signatures.RemainingBytes{BeginOffset: startOffsetToCopy, EndOffset: sig.Offset + int64(sig.Size) - 1})
+			startOffsetToCopy = sig.Offset + int64(sig.Size)
+		} else {
+
+			// why on earth do I have this here and not just 1 out side of the if statement? Will code as per original but will definitely
+			// need to revisit this.
+			startOffsetToCopy = sig.Offset + int64(sig.Size)
+		}
+	}
+
+	return remainingBytesList, nil
+}
+
 
 
 
