@@ -46,6 +46,7 @@ func NewBlobHandler(accountName string, accountKey string ) BlobHandler {
 
 func createBlobClientPipeline(accountName string, accountKey string)  pipeline.Pipeline {
 	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
+	
 	if err != nil {
 		log.Fatal("Invalid credentials with error: " + err.Error())
 	}
@@ -181,7 +182,7 @@ func (bh BlobHandler) UploadBlob(localFile *os.File,
 
 func (bh BlobHandler) launchConcurrentUploader(dataCh chan UploadMessage, uploadedBlockCh chan signatures.UploadedBlock, blobURL *azblob.BlockBlobURL) {
 
-	maxUploaders := 10
+	maxUploaders := 100
 	for i:=0; i<maxUploaders;i++ {
 		go bh.WriteBytesWithChannel(dataCh, uploadedBlockCh, blobURL)
 	}
@@ -208,7 +209,7 @@ func (bh BlobHandler) UploadRemainingBytesAsBlocks( remainingBytes signatures.Re
 	// loop and write in blocks.
 	offset := remainingBytes.BeginOffset
   total := 0
-  dataCh := make(chan UploadMessage,50)
+  dataCh := make(chan UploadMessage,100)
 
   // stupid large channel until I sort this shit out.
 	uploadedBlockCh := make(chan signatures.UploadedBlock,100000)
@@ -272,7 +273,7 @@ func (bh BlobHandler) UploadRemainingBytesAsBlocks( remainingBytes signatures.Re
 			select {
 			  case uploadedBlock := <- uploadedBlockCh:
 				  uploadedBlockList = append(uploadedBlockList, uploadedBlock)
-				  case <- time.After(10 * time.Second):
+				  case <- time.After(5 * time.Second):
 				  	done = true
 			}
 		}

@@ -182,10 +182,6 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 				    lastDisplayOffset = offset + 100000
 			    }
 
-			    if offset > 1821060 {
-			    	fmt.Printf("boo\n")
-			    }
-
     			// generate fresh sig... not really rolling
     			if generateFreshSig {
     				buffer, err := azureutils.PopulateBuffer(&mm, offset, int64(windowSize), byteRange.EndOffset)
@@ -211,7 +207,7 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 			    	nextByte := mm[offset + windowSize -1]
 				    currentSig = signatures.RollSignature(windowSize, previousByte, nextByte, currentSig)
 
-
+/*
 				    // just for testing idea.
 				    buffer, err := azureutils.PopulateBuffer(&mm, offset, int64(windowSize), byteRange.EndOffset)
 				    if err != nil {
@@ -223,7 +219,8 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 				    tempCompareSig := signatures.CreateRollingSignature(buffer, bytesRead)
             if currentSig != tempCompareSig {
             	fmt.Printf("rolling vs new sig differ!!!\n")
-            }
+            } */
+
 			    }
 
 			    _, ok := sigLUT[currentSig]
