@@ -191,49 +191,15 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 				    }
 				    bytesRead := len(buffer)
 				    currentSig = signatures.CreateRollingSignature(buffer, int(bytesRead))
+				    generateFreshSig = false
 			    } else {
-
-			    	// roll existing sig.
-			    	/*
-			    	localFile.Seek(offset-1, 0)
-			    	b := make([]byte,1)
-			    	_,_ = localFile.ReadAt(b,offset-1)
-			    	previousByte := b[0] */
 			    	previousByte := mm[offset-1]
-
-			    	/*
-				    _,_ = localFile.ReadAt(b, offset + windowSize - 1)
-				    nextByte := b[0] */
 			    	nextByte := mm[offset + windowSize -1]
 				    currentSig = signatures.RollSignature(windowSize, previousByte, nextByte, currentSig)
-
-/*
-				    // just for testing idea.
-				    buffer, err := azureutils.PopulateBuffer(&mm, offset, int64(windowSize), byteRange.EndOffset)
-				    if err != nil {
-					    fmt.Printf("Cannot read file: %s\n", err.Error())
-					    return nil, nil, err
-				    }
-
-				    bytesRead := len(buffer)
-				    tempCompareSig := signatures.CreateRollingSignature(buffer, bytesRead)
-            if currentSig != tempCompareSig {
-            	fmt.Printf("rolling vs new sig differ!!!\n")
-            } */
-
 			    }
 
 			    _, ok := sigLUT[currentSig]
 			    if ok {
-			    	/*
-			      localFile.Seek(offset,0)
-			      bytesRead, err := localFile.ReadAt(buffer, offset)
-			      if err != nil {
-			      	fmt.Printf("Unable to read file:  %s\n", err.Error())
-			      	return nil, nil, err
-			      } */
-			    	//buffer = mm[offset:offset + int64(signatures.SignatureSize)]
-						//bytesRead := signatures.SignatureSize
 				    buffer, _ := azureutils.PopulateBuffer(&mm, offset, int64(windowSize), byteRange.EndOffset)
 				    bytesRead := len(buffer)
 				    md5Sig := signatures.CreateMD5Signature(buffer, int(bytesRead))
@@ -241,14 +207,9 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 			      sigMatchingRollingSigAndMD5, sigFound := getMatchingMD5Sig(sigForCurrentRollingSig, md5Sig)
 
 			      if sigFound {
-			      	if oldEndOffset != offset {
-			      		newRemainingBytes = append(newRemainingBytes, signatures.RemainingBytes{BeginOffset: oldEndOffset, EndOffset: offset-1})
-				      }
-
 				      sigMatchingRollingSigAndMD5.Offset = offset
 				      signaturesToReuse = append(signaturesToReuse, sigMatchingRollingSigAndMD5)
-				      offset += windowSize
-				      generateFreshSig = true
+				      offset++
 				      oldEndOffset = offset
 			      } else {
 			      	offset++

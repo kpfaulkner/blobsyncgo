@@ -12,7 +12,6 @@ import (
 	_ "net/http/pprof"
 	"os"
 
-	"sort"
 )
 
 func main() {
@@ -22,26 +21,25 @@ func main() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
 
-	file1Path := flag.String("file1", "", "path to file1")
-	file2Path := flag.String("file2", "", "path to file2")
+	newFilePath := flag.String("newfilepath", "", "path to new file")
+	existingFilePath := flag.String("existingfilepath", "", "path to existing")
 
 	//verbose := flag.Bool("verbose", false, "verbose")
 
 	flag.Parse()
 
-	if *file1Path == "" || *file2Path == "" {
+	if *newFilePath == "" || *existingFilePath == "" {
 		fmt.Printf("Error....\n")
 		return
 	}
 
 
 
-	file1,_ := os.Open(*file1Path)
-	file2,_ := os.Open(*file2Path)
-	sig1, _ := signatures.CreateSignatureFromScratch(file1)
-	sig2, _ := signatures.CreateSignatureFromScratch(file2)
+	existingFile,_ := os.Open(*existingFilePath)
+	newFile,_ := os.Open(*newFilePath)
+	existingSig, _ := signatures.CreateSignatureFromScratch(existingFile)
 
-  CompareSignatures(sig1, sig2)
+  CompareSignatures(existingSig, newFile)
 }
 
 func getSigSizes( sig *signatures.SizeBasedCompleteSignature) []int {
@@ -66,6 +64,9 @@ func generateSigLUT( sigs []signatures.BlockSig) map[[16]byte]signatures.BlockSi
 	return lut
 }
 
+
+
+
 // given some existingSig, search through updated/newer file to see
 // what parts already exist!
 func CompareSignatures(existingSig *signatures.SizeBasedCompleteSignature, updatedFile *os.File) {
@@ -75,26 +76,12 @@ func CompareSignatures(existingSig *signatures.SizeBasedCompleteSignature, updat
 		log.Fatalf("Cannot compare signatures %s\n", err.Error())
 	}
 
-	for
-	// go othrough existing sizes.
-	for _,ss := range existingSigSizes {
-
-		// all sig2 sigs for a size ss
-		sig2LUT := generateSigLUT( sig2.Signatures[ss].SignatureList)
-
-		sizeCountMatch := 0
-		sizeCountNoMatch := 0
-		// check sig1 to see what matches we have.
-		for _,sig := range sig1.Signatures[ss].SignatureList {
-			if _, ok := sig2LUT[sig.MD5Signature]; ok {
-				sizeCountMatch++
-				fmt.Printf("HAVE MATCH %d, offset %d\n", sizeCountMatch, sig.Offset)
-			} else {
-				sizeCountNoMatch++
-			}
-		}
-		fmt.Printf("Size %d has %d matches and %d no-matches\n", ss, sizeCountMatch, sizeCountNoMatch)
+	for _,sr := range searchResults.SignaturesToReuse {
+		fmt.Printf("reusing %d\n", sr.Offset)
 	}
+	fmt.Printf("total sigs reused %d\n", len(searchResults.SignaturesToReuse))
+	fmt.Printf("total ranges to download %d\n", len(searchResults.ByteRangesToUpload))
+
 
 }
 
