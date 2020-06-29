@@ -396,7 +396,7 @@ func (bs BlobSync) generateSig(localFile *os.File) (*signatures.SizeBasedComplet
 	// rewind to begining of file.
 	localFile.Seek(0,0)
 
-	sig, err := signatures.CreateSignatureFromScratch(localFile)
+	sig, err := signatures.CreateSignatureFromScratch(localFile, signatures.SignatureSize)
 	if err != nil {
 		fmt.Printf("Cannot create signature %s\n", err.Error())
 		return nil, err

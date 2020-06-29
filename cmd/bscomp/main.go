@@ -23,6 +23,7 @@ func main() {
 
 	newFilePath := flag.String("newfilepath", "", "path to new file")
 	existingFilePath := flag.String("existingfilepath", "", "path to existing")
+	sigSize := flag.Int("sigsize", 20000, "sig size")
 
 	//verbose := flag.Bool("verbose", false, "verbose")
 
@@ -37,9 +38,9 @@ func main() {
 
 	existingFile,_ := os.Open(*existingFilePath)
 	newFile,_ := os.Open(*newFilePath)
-	existingSig, _ := signatures.CreateSignatureFromScratch(existingFile)
+	existingSig, _ := signatures.CreateSignatureFromScratch(existingFile, *sigSize)
 
-  CompareSignatures(existingSig, newFile)
+  CompareSignatures(existingSig, newFile, *sigSize)
 }
 
 func getSigSizes( sig *signatures.SizeBasedCompleteSignature) []int {
@@ -69,16 +70,17 @@ func generateSigLUT( sigs []signatures.BlockSig) map[[16]byte]signatures.BlockSi
 
 // given some existingSig, search through updated/newer file to see
 // what parts already exist!
-func CompareSignatures(existingSig *signatures.SizeBasedCompleteSignature, updatedFile *os.File) {
+func CompareSignatures(existingSig *signatures.SizeBasedCompleteSignature, updatedFile *os.File, sigSize int) {
 
 	searchResults, err := blobsync.SearchLocalFileForSignature(updatedFile, *existingSig)
 	if err != nil {
 		log.Fatalf("Cannot compare signatures %s\n", err.Error())
 	}
 
+	/*
 	for _,sr := range searchResults.SignaturesToReuse {
 		fmt.Printf("reusing %d\n", sr.Offset)
-	}
+	} */
 	fmt.Printf("total sigs reused %d\n", len(searchResults.SignaturesToReuse))
 	fmt.Printf("total ranges to download %d\n", len(searchResults.ByteRangesToUpload))
 

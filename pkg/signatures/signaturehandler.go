@@ -101,10 +101,10 @@ func CreateSignatureFromNewAndReusedBlocks(allBlocks []UploadedBlock) (*SizeBase
 }
 
 // CreateSignatureFromScratch reads a file, creates a signature.
-func CreateSignatureFromScratch( localFile *os.File ) (*SizeBasedCompleteSignature, error) {
+func CreateSignatureFromScratch( localFile *os.File, sigSize int) (*SizeBasedCompleteSignature, error) {
 
 	offset := int64(0)
-	buffer := make([]byte, SignatureSize)
+	buffer := make([]byte, sigSize)
 	idCount := 0
 	//reader := bufio.NewReader(f)
 

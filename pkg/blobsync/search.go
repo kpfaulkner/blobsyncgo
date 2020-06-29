@@ -43,6 +43,7 @@ func SearchLocalFileForSignature( localFile *os.File, sig signatures.SizeBasedCo
 
   for _,sigSize := range signatureSizesArray {
 
+  	fmt.Printf("Processing sig size %d\n", sigSize)
   	// get all sigs of a particular size.
   	sigs := sig.Signatures[sigSize]
   	newRemainingByteList, newSignaturesToReuse, err := searchLocalFileForSignaturesOfGivenSize( sigs, localFile, remainingByteList, int64(sigSize), fileLength)
@@ -178,8 +179,10 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 
     		for {
     			if offset > lastDisplayOffset {
-				    fmt.Printf("offset is %d\n", offset)
-				    lastDisplayOffset = offset + 100000
+				    fmt.Printf("offset is %d : sig matches so far %d\n", offset, len(signaturesToReuse))
+
+				    lastDisplayOffset = offset + 10000000
+
 			    }
 
     			// generate fresh sig... not really rolling
@@ -210,6 +213,7 @@ func searchLocalFileForSignaturesOfGivenSize(sig signatures.CompleteSignature, l
 				      sigMatchingRollingSigAndMD5.Offset = offset
 				      signaturesToReuse = append(signaturesToReuse, sigMatchingRollingSigAndMD5)
 				      offset++
+				      //offset += windowSize
 				      oldEndOffset = offset
 			      } else {
 			      	offset++
